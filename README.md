@@ -38,7 +38,8 @@ one through `glitchclose:close`. Setup runs at 2×; the closes are real time:
 
 Every frame of the collapse is one fragment-shader pass: v-sync seam, slice
 tearing, macroblock corruption, whole-frame ghost copies, chromatic aberration
-and static, with the caption composited on top so it stays legible.
+and static, with the caption composited on top so it stays legible. The window's
+own border stays clean throughout — the effect is inset strictly inside it.
 
 <details>
 <summary><b>3LA-Feed-Loss</b> — the earlier CPU-composited version</summary>
@@ -737,6 +738,13 @@ uniform is a build error rather than a dead slider.
 
 ## Notes
 
+- **The border is never glitched.** The effect box is inset by the window's
+  border width, so no border pixel is fed through the shader and the border ring
+  stays intact while the content tears apart. Without the inset the box sits
+  flush against the border and edge sampling drags border colour inward, drawing
+  a bright 1px frame around the effect. The cost is that the outermost 1px ring
+  of window content is left untouched, which is not noticeable at typical border
+  widths.
 - The shader is compiled lazily on the first frame of the first effect (the GL
   context is only guaranteed current mid-render). A compile failure logs, raises
   one notification, and latches off — closes then behave like a plain

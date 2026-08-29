@@ -211,9 +211,15 @@ bool CGlitchCloseManager::beginEffect(const PHLWINDOW& w) {
     if (w->m_workspace)
         pos = pos + w->m_workspace->m_renderOffset->value();
 
-    // stay INSIDE the border: the window keeps its border ring visible,
-    // framing the collapse until the close actually lands
-    CBox     global{pos, SIZE};
+    // Stay strictly INSIDE the border, so the window keeps a clean border ring
+    // framing the collapse and no border pixel is ever fed through the shader.
+    // Without the inset the effect box sits flush against the border and edge
+    // sampling (linear filtering at the 0..1 boundary) drags border colour into
+    // the glitch, which shows up as a bright 1px frame around the effect.
+    const double BORDER = static_cast<double>(std::max<int64_t>(w->getRealBorderSize(), 0));
+    CBox         global = CBox{pos, SIZE}.expand(-BORDER);
+    if (global.w < 1.0 || global.h < 1.0)
+        return false;
 
     SEffect  e;
     e.window    = w;
