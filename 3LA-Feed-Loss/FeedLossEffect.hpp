@@ -1,6 +1,9 @@
 #pragma once
 
 #include <chrono>
+#include <optional>
+#include <regex>
+#include <string>
 #include <vector>
 
 #include <hyprland/src/desktop/DesktopTypes.hpp>
@@ -56,11 +59,19 @@ class CFeedLossManager {
     void                              ensureNoiseFrames();
     SP<Render::ITexture>              textTexture();
     void                              drawEffect(const SEffect& e, const PHLMONITOR& mon, double elapsedMs, double durationMs, double fadeMs);
+    static bool                       matches(std::optional<std::regex>& cache, std::string& cachedPattern, const std::string& pattern, const std::string& s);
 
     std::vector<SP<Render::ITexture>> m_noiseFrames;
     SP<Render::ITexture>              m_textTex;
     std::vector<SEffect>              m_effects;
     std::vector<SPending>             m_pending;
+
+    // compiled ignore_class/ignore_title regexes, rebuilt only when the
+    // pattern string changes (config reload) instead of on every window event
+    std::optional<std::regex>         m_ignoreClassRe;
+    std::string                       m_ignoreClassPattern;
+    std::optional<std::regex>         m_ignoreTitleRe;
+    std::string                       m_ignoreTitlePattern;
 };
 
 inline CFeedLossManager g_feedLoss;

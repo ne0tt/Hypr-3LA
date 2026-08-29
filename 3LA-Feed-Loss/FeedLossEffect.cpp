@@ -37,6 +37,25 @@ static CHyprColor colorOr(const SP<Config::Values::CColorValue>& v, const CHyprC
     return C != 0 ? CHyprColor{static_cast<uint64_t>(C)} : def;
 }
 
+// recompiles only when the pattern string differs from what's cached, so the
+// common case (pattern unchanged since last call) is just a regex_search
+bool CFeedLossManager::matches(std::optional<std::regex>& cache, std::string& cachedPattern, const std::string& pattern, const std::string& s) {
+    if (pattern.empty() || s.empty())
+        return false;
+
+    if (!cache || pattern != cachedPattern) {
+        cachedPattern = pattern;
+        try {
+            cache = std::regex{pattern};
+        } catch (const std::regex_error&) {
+            cache.reset(); // bad user regex: ignore the filter
+            return false;
+        }
+    }
+
+    return std::regex_search(s, *cache);
+}
+
 bool CFeedLossManager::beginEffect(const PHLWINDOW& w) {
     if (!w || !Desktop::View::validMapped(w) || w->isX11OverrideRedirect())
         return false;
@@ -56,18 +75,9 @@ bool CFeedLossManager::beginEffect(const PHLWINDOW& w) {
     // catch them by class/title instead. the CACHED m_class/m_title, not
     // fetchClass()/fetchTitle(): the close event fires from unmapWindow(),
     // when the xdg toplevel resource the fetchers read may already be gone
-    static const auto matches = [](const std::string& rx, const std::string& s) {
-        if (rx.empty() || s.empty())
-            return false;
-        try {
-            return std::regex_search(s, std::regex{rx});
-        } catch (const std::regex_error&) {
-            return false; // bad user regex: ignore the filter
-        }
-    };
-    if (matches(g_ignoreClass->value(), w->m_class.empty() ? w->fetchClass() : w->m_class))
+    if (matches(m_ignoreClassRe, m_ignoreClassPattern, g_ignoreClass->value(), w->m_class.empty() ? w->fetchClass() : w->m_class))
         return false;
-    if (matches(g_ignoreTitle->value(), w->m_title.empty() ? w->fetchTitle() : w->m_title))
+    if (matches(m_ignoreTitleRe, m_ignoreTitlePattern, g_ignoreTitle->value(), w->m_title.empty() ? w->fetchTitle() : w->m_title))
         return false;
 
     const auto MON = w->m_monitor.lock();
@@ -110,9 +120,9 @@ bool CFeedLossManager::beginEffect(const PHLWINDOW& w) {
 
 // close the focused window, feed-loss style: the burst plays over the live
 // window (its tile slot stays occupied), and the real close request goes out at
-// close_at * duration — by default at the very end of the burst, so the slot is
-// held for the full burst and the re-tile happens under the fade tail, not
-// under full static.
+// close_at * (duration + fade) — by default at the very end of the fade tail,
+// so the slot is held for the whole effect and neighbors only re-tile once the
+// overlay has fully dissolved, not while it's still fading on top of them.
 SDispatchResult CFeedLossManager::dispatchClose() {
     const auto W = Desktop::focusState()->window();
     if (!W)
@@ -129,8 +139,9 @@ SDispatchResult CFeedLossManager::dispatchClose() {
     }
 
     const double DUR   = std::max<int64_t>(g_duration->value(), 100);
+    const double FADE  = std::max<int64_t>(g_fade->value(), 0);
     const double AT    = std::clamp(g_closeAt->value(), 0.0F, 1.0F);
-    const auto   DELAY = std::chrono::milliseconds(static_cast<int64_t>(DUR * AT));
+    const auto   DELAY = std::chrono::milliseconds(static_cast<int64_t>((DUR + FADE) * AT));
 
     auto         timer = makeShared<CEventLoopTimer>(
         DELAY,
@@ -216,8 +227,12 @@ void CFeedLossManager::onRenderStage(eRenderStage stage) {
 }
 
 void CFeedLossManager::onConfigReloaded() {
-    m_textTex.reset();      // re-render with the new text/font/size/color
-    m_noiseFrames.clear();  // regenerate with the new static tint
+    m_textTex.reset();     // re-render with the new text/font/size/color
+    m_noiseFrames.clear(); // regenerate with the new static tint
+    // not strictly required (matches() rebuilds on pattern mismatch anyway),
+    // but frees the compiled regex promptly if the filter was cleared
+    m_ignoreClassRe.reset();
+    m_ignoreTitleRe.reset();
 }
 
 void CFeedLossManager::reset() {

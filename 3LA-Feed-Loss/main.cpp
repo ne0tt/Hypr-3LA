@@ -44,7 +44,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                                                              Config::Values::SIntValueOptions{.min = 0, .max = 1});
     g_ignoreClass   = makeShared<Config::Values::CStringValue>("plugin:3la_feed_loss:ignore_class", "regex of window classes to never burst on (empty = none)", "^(xdg-desktop-portal.*)$");
     g_ignoreTitle   = makeShared<Config::Values::CStringValue>("plugin:3la_feed_loss:ignore_title", "regex of window titles to never burst on (empty = none)", "");
-    g_closeAt       = makeShared<Config::Values::CFloatValue>("plugin:3la_feed_loss:close_at", "fraction of duration after which feedloss:close sends the real close", 1.0F,
+    g_closeAt       = makeShared<Config::Values::CFloatValue>("plugin:3la_feed_loss:close_at", "fraction of duration+fade after which feedloss:close sends the real close", 1.0F,
                                                              Config::Values::SFloatValueOptions{.min = 0.F, .max = 1.F});
     g_staticColor   = makeShared<Config::Values::CColorValue>("plugin:3la_feed_loss:col.static", "tint of the static noise (0 = neutral gray)", 0);
     g_backdropColor = makeShared<Config::Values::CColorValue>("plugin:3la_feed_loss:col.backdrop", "backdrop color (0 = black)", 0);

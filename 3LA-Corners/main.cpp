@@ -66,6 +66,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_focusFlashDuration =
         makeShared<Config::Values::CIntValue>("plugin:3la_corners:focus_flash_duration", "focus flash on/off phase duration in ms", 150, Config::Values::SIntValueOptions{.min = 16});
 
+    g_glow = makeShared<Config::Values::CIntValue>("plugin:3la_corners:glow", "draw a soft glow behind the brackets while a spawn/focus flash is running (0 = off)", 0,
+                                                    Config::Values::SIntValueOptions{.min = 0, .max = 1});
+    g_glowSize = makeShared<Config::Values::CIntValue>("plugin:3la_corners:glow.size", "glow spread distance in px", 12, Config::Values::SIntValueOptions{.min = 0});
+    g_glowStrength =
+        makeShared<Config::Values::CFloatValue>("plugin:3la_corners:glow.strength", "overall glow intensity (0..1)", 0.5F, Config::Values::SFloatValueOptions{.min = 0.F, .max = 1.F});
+    g_colorGlow = makeShared<Config::Values::CColorValue>("plugin:3la_corners:col.glow", "glow color (0 = follow the bracket's own color)", 0);
+
     HyprlandAPI::addConfigValueV2(PHANDLE, g_offset);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_length);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_thickness);
@@ -76,6 +83,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValueV2(PHANDLE, g_flashOnFocus);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_focusFlashCount);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_focusFlashDuration);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_glow);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_glowSize);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_glowStrength);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_colorGlow);
 
     g_openListener    = Event::bus()->m_events.window.open.listen([](const PHLWINDOW& w) { addDeco(w, true); });
     g_destroyListener = Event::bus()->m_events.window.destroy.listen([](const PHLWINDOWREF& w) {
@@ -132,4 +143,8 @@ APICALL EXPORT void PLUGIN_EXIT() {
     g_flashOnFocus.reset();
     g_focusFlashCount.reset();
     g_focusFlashDuration.reset();
+    g_glow.reset();
+    g_glowSize.reset();
+    g_glowStrength.reset();
+    g_colorGlow.reset();
 }

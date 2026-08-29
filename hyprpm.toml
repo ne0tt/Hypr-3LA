@@ -18,3 +18,9 @@ description = "CCTV signal-lost static burst where a closed window was"
 authors = ["sispx"]
 output = "3LA-Feed-Loss/3LA-Feed-Loss.so"
 build = ["make -C 3LA-Feed-Loss all"]
+
+[3LA-GlitchClose]
+description = "Shader-driven glitch collapse where a closed window was"
+authors = ["sispx"]
+output = "3LA-GlitchClose/3LA-GlitchClose.so"
+build = ["make -C 3LA-GlitchClose all"]

@@ -120,6 +120,16 @@ static CHyprColor cornerColor(bool active) {
     return borderGradientColor(active);
 }
 
+// 0 = follow the bracket's own color, so glow tints with focus state without
+// needing a second color configured for the common case.
+static CHyprColor glowColor(const CHyprColor& bracketColor) {
+    const auto CONFIGURED = g_colorGlow->value();
+    if (CONFIGURED != 0)
+        return CHyprColor{static_cast<uint64_t>(CONFIGURED)};
+
+    return bracketColor;
+}
+
 std::array<CBox, 8> CCornersDecoration::cornerBoxes(const Vector2D& pos, const Vector2D& size, double outerDist) const {
     const double D = outerDist;
     const double T = std::max<double>(g_thickness->value(), 1);
@@ -138,6 +148,32 @@ std::array<CBox, 8> CCornersDecoration::cornerBoxes(const Vector2D& pos, const V
         CBox{L, B - T, LX, T},       CBox{L, B - LY, T, LY - T},          // bottom-left
         CBox{R - LX, B - T, LX, T},  CBox{R - T, B - LY, T, LY - T},      // bottom-right
     };
+}
+
+// cheap layered-rect glow: a handful of expanded, fading-alpha copies of the
+// box drawn behind it. no shader access from a plugin, so this stands in for a
+// true soft blur -- a stepped halo rather than a smooth one, tuned by
+// glow.size (spread) and glow.strength (overall intensity).
+void CCornersDecoration::drawGlow(const CBox& box, const CHyprColor& color, float alpha) const {
+    static constexpr int LAYERS = 4;
+
+    const float SIZE     = std::max<Config::INTEGER>(g_glowSize->value(), 0);
+    const float STRENGTH = std::clamp(g_glowStrength->value(), 0.F, 1.F);
+    if (SIZE <= 0.F || STRENGTH <= 0.F || alpha <= 0.F)
+        return;
+
+    for (int i = LAYERS; i >= 1; --i) {
+        const float T          = static_cast<float>(i) / LAYERS; // 1.0 (outermost) .. 1/LAYERS (innermost)
+        const float EXPAND     = SIZE * T;
+        const float LAYERALPHA = STRENGTH * alpha * (1.F - T) / LAYERS;
+        if (LAYERALPHA <= 0.F)
+            continue;
+
+        CRectPassElement::SRectData data;
+        data.box   = CBox{box}.expand(EXPAND);
+        data.color = CHyprColor{static_cast<float>(color.r), static_cast<float>(color.g), static_cast<float>(color.b), LAYERALPHA};
+        g_pHyprRenderer->m_renderPass.add(makeUnique<CRectPassElement>(data));
+    }
 }
 
 void CCornersDecoration::draw(PHLMONITOR pMonitor, float const& a) {
@@ -172,16 +208,27 @@ void CCornersDecoration::draw(PHLMONITOR pMonitor, float const& a) {
     if (col.a <= 0.F)
         return;
 
+    const CHyprColor glow = glowColor(col);
+
     const double D = PWINDOW->getRealBorderSize() + g_offset->value() + g_thickness->value();
 
     Vector2D     offset = PWINDOW->m_floatingOffset - pMonitor->m_position;
     if (PWINDOW->m_workspace)
         offset = offset + PWINDOW->m_workspace->m_renderOffset->value();
 
+    // glow only renders while a spawn/focus flash burst is actively running,
+    // not on every frame -- keeps the brackets plain the rest of the time.
+    const bool GLOW = g_glow->value() != 0 && m_flashing;
+
     for (auto box : cornerBoxes(PWINDOW->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT), //
                                 PWINDOW->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT), D)) {
+        CBox scaledBox = box.translate(offset).scale(pMonitor->m_scale).round();
+
+        if (GLOW)
+            drawGlow(scaledBox, glow, col.a);
+
         CRectPassElement::SRectData data;
-        data.box   = box.translate(offset).scale(pMonitor->m_scale).round();
+        data.box   = scaledBox;
         data.color = col;
         g_pHyprRenderer->m_renderPass.add(makeUnique<CRectPassElement>(data));
     }
@@ -200,8 +247,11 @@ void CCornersDecoration::damageEntire() {
     if (!PWINDOW)
         return;
 
-    const double D   = PWINDOW->getRealBorderSize() + g_offset->value() + g_thickness->value();
-    CBox         box = PWINDOW->geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+    // glow layers extend past the bracket boxes themselves, so the damage region
+    // must grow by glow.size too or its outer edge leaves trails when moving/resizing.
+    const double GLOWEXPAND = g_glow->value() != 0 ? std::max<Config::INTEGER>(g_glowSize->value(), 0) : 0;
+    const double D          = PWINDOW->getRealBorderSize() + g_offset->value() + g_thickness->value() + GLOWEXPAND;
+    CBox         box        = PWINDOW->geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
     box.translate(PWINDOW->m_floatingOffset).expand(D);
     g_pHyprRenderer->damageBox(box);
 }

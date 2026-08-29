@@ -1,0 +1,698 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3LA-GlitchClose — shader tuner</title>
+<style>
+  :root {
+    --bg:        #0e1514;
+    --panel:     #161d1d;
+    --panel-2:   #1a2121;
+    --line:      #3f4948;
+    --fg:        #dde4e3;
+    --muted:     #889392;
+    --primary:   #80d5d4;
+    --accent:    #ffb4ab;
+    --mono: "JetBrainsMono Nerd Font", "JetBrains Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: var(--mono); font-size: 13px; line-height: 1.5;
+  }
+  header {
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+    padding: 12px 18px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  header h1 { margin: 0; font-size: 15px; font-weight: 700; color: var(--primary); letter-spacing: .04em; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  .wrap { display: grid; grid-template-columns: minmax(0,1fr) 340px; gap: 0; height: calc(100vh - 50px); }
+  @media (max-width: 900px) { .wrap { grid-template-columns: 1fr; height: auto; } }
+
+  .stage { display: flex; flex-direction: column; min-width: 0; padding: 16px; gap: 12px; }
+  .canvas-box {
+    flex: 1; min-height: 0; display: grid; place-items: center;
+    background:
+      linear-gradient(45deg, #0a0f0f 25%, transparent 25%, transparent 75%, #0a0f0f 75%),
+      linear-gradient(45deg, #0a0f0f 25%, #121a1a 25%, #121a1a 75%, #0a0f0f 75%);
+    background-size: 16px 16px; background-position: 0 0, 8px 8px;
+    border: 1px solid var(--line); border-radius: 4px; overflow: hidden;
+    position: relative;
+  }
+  /* Approximation of the plugin's caption: it composites a rect + a texture
+     from renderText(), so this will not be glyph-identical -- close enough to
+     judge size, colour, padding and timing. */
+  #caption {
+    position: absolute; pointer-events: none; white-space: pre;
+    font-weight: 700; line-height: 1.15; display: none;
+  }
+  canvas { max-width: 100%; max-height: 100%; display: block; }
+
+  .timeline { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .timeline button, .btn {
+    font-family: var(--mono); font-size: 12px; cursor: pointer;
+    background: var(--panel-2); color: var(--fg);
+    border: 1px solid var(--line); border-radius: 3px; padding: 5px 11px;
+  }
+  .timeline button:hover, .btn:hover { border-color: var(--primary); color: var(--primary); }
+  .timeline button.on { border-color: var(--primary); color: var(--primary); }
+  #scrub { flex: 1; min-width: 160px; }
+  .phase { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; min-width: 128px; }
+  .phase.burst { color: var(--primary); }
+  .phase.fade  { color: var(--accent); }
+  .phase.idle  { color: var(--muted); }
+
+  aside {
+    border-left: 1px solid var(--line); background: var(--panel);
+    padding: 14px 16px; overflow-y: auto;
+  }
+  @media (max-width: 900px) { aside { border-left: none; border-top: 1px solid var(--line); } }
+  aside h2 {
+    margin: 18px 0 8px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600;
+  }
+  aside h2:first-child { margin-top: 0; }
+
+  .ctl { margin-bottom: 11px; }
+  .ctl .row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .ctl label { color: var(--fg); }
+  .ctl .val { color: var(--primary); font-variant-numeric: tabular-nums; }
+  .ctl .desc { color: var(--muted); font-size: 11px; margin-top: 1px; }
+  input[type=range] { width: 100%; accent-color: var(--primary); margin: 3px 0 0; }
+  input[type=color] {
+    width: 100%; height: 26px; padding: 0; cursor: pointer;
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 3px;
+  }
+  input[type=number], input[type=text], input[type=file] {
+    width: 100%; font-family: var(--mono); font-size: 12px;
+    background: var(--panel-2); color: var(--fg);
+    border: 1px solid var(--line); border-radius: 3px; padding: 4px 7px;
+  }
+  .checks { display: flex; flex-direction: column; gap: 7px; }
+  .checks label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  input[type=checkbox] { accent-color: var(--primary); }
+  .btnrow { display: flex; gap: 7px; flex-wrap: wrap; }
+  textarea {
+    width: 100%; height: 160px; margin-top: 9px; resize: vertical;
+    font-family: var(--mono); font-size: 11px; line-height: 1.45;
+    background: var(--bg); color: var(--fg);
+    border: 1px solid var(--line); border-radius: 3px; padding: 8px; white-space: pre;
+  }
+  .err {
+    margin: 14px 18px; padding: 10px 12px; white-space: pre-wrap;
+    background: #2a1416; border: 1px solid var(--accent); border-radius: 4px;
+    color: var(--accent); font-size: 12px;
+  }
+  .note { color: var(--muted); font-size: 11px; margin-top: 8px; }
+  kbd {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 3px;
+    padding: 0 4px; font-size: 11px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>3LA-GlitchClose</h1>
+  <span class="sub">shader tuner &mdash; same GLSL the plugin compiles, extracted from
+  <code>shader.hpp</code> at build time</span>
+</header>
+
+<div id="fatal" class="err" hidden></div>
+
+<div class="wrap">
+  <div class="stage">
+    <div class="canvas-box"><canvas id="gl"></canvas><div id="caption"></div></div>
+    <div class="timeline">
+      <button id="play">&#9658; play</button>
+      <button id="loop" class="on">&#8635; loop</button>
+      <input type="range" id="scrub" min="0" max="1" step="0.001" value="0">
+      <span class="phase idle" id="phase">idle</span>
+    </div>
+    <div class="note">
+      Drag an image onto the canvas to swap the source, or use the file picker.
+      <kbd>space</kbd> play/pause &middot; <kbd>r</kbd> restart &middot; <kbd>n</kbd> new seed
+    </div>
+  </div>
+
+  <aside>
+    <h2>Timeline</h2>
+    <div id="timeline-ctls"></div>
+
+    <h2>Shader</h2>
+    <div id="slider-ctls"></div>
+
+    <h2>Caption</h2>
+    <div id="caption-ctls"></div>
+
+    <h2>Colours</h2>
+    <div id="color-ctls"></div>
+    <div class="btnrow" style="margin-top:8px">
+      <button class="btn" id="preset-matugen">matugen</button>
+      <button class="btn" id="preset-stock">stock</button>
+    </div>
+
+    <h2>Simulation</h2>
+    <div class="checks">
+      <label><input type="checkbox" id="hasTex" checked> window captured
+        <span class="desc">off = snapshot failed (static-only path)</span></label>
+      <label><input type="checkbox" id="showBg" checked> desktop behind tears</label>
+    </div>
+    <div class="ctl" style="margin-top:9px">
+      <div class="row"><label for="bgDim">backdrop brightness</label><span class="val" id="bgDim-v">0.25</span></div>
+      <input type="range" id="bgDim" min="0" max="1" step="0.01" value="0.25">
+    </div>
+    <div class="ctl">
+      <label for="file">source image</label>
+      <input type="file" id="file" accept="image/*">
+    </div>
+
+    <h2>Export</h2>
+    <div class="btnrow">
+      <button class="btn" id="copy">copy Lua</button>
+      <button class="btn" id="reset">reset to plugin defaults</button>
+      <span class="note" id="saved" style="align-self:center"></span>
+    </div>
+    <textarea id="out" readonly spellcheck="false"></textarea>
+    <div class="note">Paste into <code>~/.config/hypr/config/plugins.lua</code>, then
+      <code>hyprctl eval 'dofile(...)'</code>.</div>
+  </aside>
+</div>
+
+<script src="generated.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  const fatal = (msg) => {
+    const el = document.getElementById("fatal");
+    el.hidden = false; el.textContent = msg;
+    throw new Error(msg);
+  };
+
+  if (!window.GLITCH_FRAG) fatal("generated.js is missing or empty. Run `make` in this directory.");
+
+  const canvas = document.getElementById("gl");
+  const gl = canvas.getContext("webgl2", { alpha: false, premultipliedAlpha: false });
+  if (!gl) fatal("WebGL2 is unavailable in this browser. The plugin shader is GLSL ES 3.00, which needs WebGL2.");
+
+  // ---- shader plumbing ------------------------------------------------------
+  function compile(type, src, label) {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS))
+      fatal(`${label} failed to compile:\n\n${gl.getShaderInfoLog(sh)}`);
+    return sh;
+  }
+  function program(vsrc, fsrc, label) {
+    const p = gl.createProgram();
+    gl.attachShader(p, compile(gl.VERTEX_SHADER, vsrc, label + " vertex"));
+    gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fsrc, label + " fragment"));
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS))
+      fatal(`${label} failed to link:\n\n${gl.getProgramInfoLog(p)}`);
+    return p;
+  }
+
+  // the plugin's shader, verbatim
+  const glitchProg = program(window.GLITCH_VERT, window.GLITCH_FRAG, "glitch");
+
+  // stand-in for the desktop the tears reveal: the same image, dimmed
+  const bgProg = program(
+    `#version 300 es
+     in vec2 pos; in vec2 texcoord; out vec2 v_uv;
+     void main() { v_uv = texcoord; gl_Position = vec4(pos * 2.0 - 1.0, 0.0, 1.0); }`,
+    `#version 300 es
+     precision highp float;
+     in vec2 v_uv; uniform sampler2D tex; uniform float dim;
+     layout(location = 0) out vec4 fragColor;
+     void main() { fragColor = vec4(texture(tex, v_uv).rgb * dim, 1.0); }`,
+    "backdrop");
+
+  // Render::GL::fullVerts, identical layout: {x, y, u, v}
+  const VERTS = new Float32Array([
+    0, 0, 0, 0,
+    0, 1, 0, 1,
+    1, 0, 1, 0,
+    1, 1, 1, 1,
+  ]);
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  const vbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, VERTS, gl.STATIC_DRAW);
+  for (const prog of [glitchProg, bgProg]) {
+    const p = gl.getAttribLocation(prog, "pos");
+    const t = gl.getAttribLocation(prog, "texcoord");
+    if (p >= 0) { gl.enableVertexAttribArray(p); gl.vertexAttribPointer(p, 2, gl.FLOAT, false, 16, 0); }
+    if (t >= 0) { gl.enableVertexAttribArray(t); gl.vertexAttribPointer(t, 2, gl.FLOAT, false, 16, 8); }
+  }
+
+  const uni = {};
+  for (const n of ["tex","hasTex","uvOffset","uvScale","resolution","progress","env","seed",
+                   "strength","aberration","blocks","noiseAmount","scanlines","roll","melt",
+                   "vignette","backdropAlpha","colBackdrop","colFringe1","colFringe2"])
+    uni[n] = gl.getUniformLocation(glitchProg, n);
+  const bgUni = { tex: gl.getUniformLocation(bgProg, "tex"), dim: gl.getUniformLocation(bgProg, "dim") };
+
+  // ---- texture --------------------------------------------------------------
+  // The plugin samples a framebuffer texture, which is stored bottom-up: its
+  // v = 0 is the BOTTOM of the window. FLIP_Y reproduces that from a top-down
+  // HTML image, so uvOffset/uvScale stay identity and the shader behaves the
+  // same as it does in the compositor.
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0,0,0,255]));
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+  let imgW = 1, imgH = 1;
+  function loadImage(src) {
+    const img = new Image();
+    img.onload = () => {
+      imgW = img.naturalWidth; imgH = img.naturalHeight;
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+      resize();
+    };
+    img.onerror = () => fatal("could not decode that image");
+    img.src = src;
+  }
+
+  function resize() {
+    const box = canvas.parentElement.getBoundingClientRect();
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const scale = Math.min(box.width / imgW, box.height / imgH, 1);
+    const cssW = Math.max(1, Math.floor(imgW * scale));
+    const cssH = Math.max(1, Math.floor(imgH * scale));
+    canvas.style.width = cssW + "px";
+    canvas.style.height = cssH + "px";
+    canvas.width = Math.floor(cssW * dpr);
+    canvas.height = Math.floor(cssH * dpr);
+  }
+  window.addEventListener("resize", resize);
+
+  // ---- controls, built from the plugin's own config table -------------------
+  const state = {};
+  const els = {};
+  const CFG = window.CONFIG.filter(c => c.role !== "skip");
+
+  // fallbacks matching the shader's "0 = built-in default" colours
+  const STOCK_COLORS = {
+    "col.backdrop": "#000000", "col.fringe1": "#ff0099", "col.fringe2": "#00e6ff",
+    "col.text": "#ffffff", "col.text_bg": "#bf0d12",
+  };
+  const MATUGEN_COLORS = {
+    "col.backdrop": "#0e1514", "col.fringe1": "#80d5d4", "col.fringe2": "#690005",
+    "col.text": "#dde4e3", "col.text_bg": "#93000a",
+  };
+
+  function ctl(cfg, host) {
+    const wrap = document.createElement("div");
+    wrap.className = "ctl";
+    if (cfg.type === "string") {
+      wrap.innerHTML = `<div class="row"><label for="c-${cfg.key}">${cfg.key}</label></div>
+        <input type="text" id="c-${cfg.key}">
+        <div class="desc">${cfg.desc}</div>`;
+      host.appendChild(wrap);
+      const input = wrap.querySelector("input");
+      input.value = state[cfg.key];
+      input.addEventListener("input", () => { state[cfg.key] = input.value; emit(); save(); });
+      els[cfg.key] = input;
+      return;
+    }
+    if (cfg.type === "color") {
+      wrap.innerHTML = `<div class="row"><label for="c-${cfg.key}">${cfg.key}</label></div>
+        <input type="color" id="c-${cfg.key}">
+        <div class="desc">${cfg.desc}</div>`;
+      host.appendChild(wrap);
+      const input = wrap.querySelector("input");
+      input.value = state[cfg.key];
+      input.addEventListener("input", () => { state[cfg.key] = input.value; emit(); save(); });
+      els[cfg.key] = input;
+      return;
+    }
+    const isInt = cfg.type === "int";
+    const min = cfg.min ?? 0;
+    const max = cfg.max ?? (isInt ? 3000 : 1);
+    const step = isInt ? 10 : 0.01;
+    wrap.innerHTML = `<div class="row"><label for="c-${cfg.key}">${cfg.key}</label>
+        <span class="val" id="v-${cfg.key}"></span></div>
+      <input type="range" id="c-${cfg.key}" min="${min}" max="${max}" step="${step}">
+      <div class="desc">${cfg.desc}</div>`;
+    host.appendChild(wrap);
+    const input = wrap.querySelector("input");
+    const out = wrap.querySelector(".val");
+    const show = () => { out.textContent = isInt ? String(state[cfg.key]) : Number(state[cfg.key]).toFixed(2); };
+    input.value = state[cfg.key];
+    show();
+    input.addEventListener("input", () => {
+      state[cfg.key] = isInt ? Math.round(+input.value) : +input.value;
+      show(); emit(); save();
+    });
+    els[cfg.key] = input;
+  }
+
+  // ---- persistence ----------------------------------------------------------
+  // Viewer-side only: slider positions, colours, toggles and the last source
+  // image. Nothing here touches the plugin -- exporting to plugins.lua stays a
+  // deliberate copy/paste. Versioned so a later schema change degrades to
+  // "start from defaults" rather than throwing.
+  const STORE_KEY = "3la-glitchclose-viewer";
+  const STORE_VER = 1;
+  const savedEl = () => document.getElementById("saved");
+
+  let saveTimer = 0, storedBg = null;
+  function save() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      const payload = {
+        v: STORE_VER,
+        state: state,
+        ui: {
+          hasTex: hasTexEl.checked,
+          showBg: showBgEl.checked,
+          bgDim: +bgDimEl.value,
+          looping: looping,
+        },
+        bg: storedBg,
+      };
+      try {
+        localStorage.setItem(STORE_KEY, JSON.stringify(payload));
+        savedEl().textContent = "saved";
+      } catch (e) {
+        // quota: almost always an oversized dropped image. Keep the settings by
+        // dropping the image from the payload rather than losing both.
+        try {
+          payload.bg = null;
+          localStorage.setItem(STORE_KEY, JSON.stringify(payload));
+          savedEl().textContent = "saved (image too large to keep)";
+        } catch (e2) {
+          savedEl().textContent = "could not save";
+        }
+      }
+      setTimeout(() => { if (savedEl().textContent.startsWith("saved")) savedEl().textContent = ""; }, 1200);
+    }, 250);
+  }
+
+  function loadStored() {
+    let p;
+    try { p = JSON.parse(localStorage.getItem(STORE_KEY) || "null"); } catch { return null; }
+    if (!p || p.v !== STORE_VER) return null;
+    // only accept keys the plugin still registers, so removing an option from
+    // main.cpp cannot resurrect a stale slider value
+    if (p.state) for (const c of CFG)
+      if (Object.prototype.hasOwnProperty.call(p.state, c.key)) state[c.key] = p.state[c.key];
+    return p;
+  }
+
+  function resetState() {
+    for (const c of CFG) {
+      state[c.key] = c.type === "color"
+        ? MATUGEN_COLORS[c.key] || STOCK_COLORS[c.key] || "#000000"
+        : c.default;
+    }
+  }
+  resetState();
+
+  const hosts = {
+    timeline: document.getElementById("timeline-ctls"),
+    slider:   document.getElementById("slider-ctls"),
+    color:    document.getElementById("color-ctls"),
+    caption:  document.getElementById("caption-ctls"),
+  };
+  for (const c of CFG) ctl(c, hosts[c.role]);
+
+  // refresh the widgets from `state` without writing back to storage
+  function syncInputsQuiet() {
+    for (const c of CFG) {
+      els[c.key].value = state[c.key];
+      const v = document.getElementById("v-" + c.key);
+      if (v) v.textContent = c.type === "int" ? String(state[c.key]) : Number(state[c.key]).toFixed(2);
+    }
+    emit();
+  }
+
+  function syncInputs() {
+    for (const c of CFG) {
+      els[c.key].value = state[c.key];
+      const v = document.getElementById("v-" + c.key);
+      if (v) v.textContent = c.type === "int" ? String(state[c.key]) : Number(state[c.key]).toFixed(2);
+    }
+    emit(); save();
+  }
+
+  const hasTexEl = document.getElementById("hasTex");
+  const showBgEl = document.getElementById("showBg");
+  const bgDimEl  = document.getElementById("bgDim");
+  const bgDimV   = document.getElementById("bgDim-v");
+  bgDimEl.addEventListener("input", () => {
+    bgDimV.textContent = (+bgDimEl.value).toFixed(2); save();
+  });
+  hasTexEl.addEventListener("change", save);
+  showBgEl.addEventListener("change", save);
+
+  document.getElementById("preset-matugen").addEventListener("click", () => {
+    Object.assign(state, MATUGEN_COLORS); syncInputs();
+  });
+  document.getElementById("preset-stock").addEventListener("click", () => {
+    Object.assign(state, STOCK_COLORS); syncInputs();
+  });
+  document.getElementById("reset").addEventListener("click", () => {
+    try { localStorage.removeItem(STORE_KEY); } catch {}
+    storedBg = null;
+    resetState(); syncInputs();
+    if (window.DEFAULT_BG) loadImage(window.DEFAULT_BG);
+  });
+
+  // ---- Lua export -----------------------------------------------------------
+  function hexToLua(hex) {
+    return "0xff" + hex.replace("#", "").toLowerCase();
+  }
+  function emit() {
+    const L = [];
+    L.push('pcall(hl.config, {');
+    L.push('    plugin = {');
+    L.push('        ["3la_glitch_close"] = {');
+    for (const c of CFG) {
+      if (c.type === "color") {
+        L.push(`            ["${c.key}"] = ${hexToLua(state[c.key])},`);
+      } else if (c.type === "string") {
+        L.push(`            ${c.key} = ${JSON.stringify(state[c.key])},`);
+      } else if (c.type === "int") {
+        L.push(`            ${c.key} = ${Math.round(state[c.key])},`);
+      } else {
+        L.push(`            ${c.key} = ${Number(state[c.key]).toFixed(2)},`);
+      }
+    }
+    L.push('        }');
+    L.push('    }');
+    L.push('})');
+    document.getElementById("out").value = L.join("\n");
+  }
+
+  document.getElementById("copy").addEventListener("click", async () => {
+    const btn = document.getElementById("copy");
+    const ta = document.getElementById("out");
+    try {
+      await navigator.clipboard.writeText(ta.value);
+    } catch {
+      ta.removeAttribute("readonly"); ta.select(); document.execCommand("copy");
+      ta.setAttribute("readonly", "");
+    }
+    const was = btn.textContent; btn.textContent = "copied";
+    setTimeout(() => btn.textContent = was, 1000);
+  });
+
+  // ---- timeline -------------------------------------------------------------
+  // Mirrors CGlitchCloseManager::onRenderStage: full strength for `duration`,
+  // then `fade` once the window is gone. The plugin waits for the window to
+  // actually disappear; a well-behaved app goes at close_at * duration, which
+  // is <= duration, so the fade reliably starts at `duration`.
+  let playing = true, looping = true, t0 = performance.now(), seed = Math.random() * 10;
+  let scrubbing = false;
+  const scrub = document.getElementById("scrub");
+  const phase = document.getElementById("phase");
+  const playBtn = document.getElementById("play");
+  const loopBtn = document.getElementById("loop");
+
+  const total = () => state.duration + state.fade;
+
+  function setPlaying(on) {
+    playing = on;
+    playBtn.innerHTML = on ? "&#10073;&#10073; pause" : "&#9658; play";
+    playBtn.classList.toggle("on", on);
+  }
+  playBtn.addEventListener("click", () => {
+    if (!playing && elapsed() >= total()) t0 = performance.now();
+    setPlaying(!playing);
+  });
+  loopBtn.addEventListener("click", () => {
+    looping = !looping; loopBtn.classList.toggle("on", looping); save();
+  });
+  scrub.addEventListener("input", () => {
+    scrubbing = true; setPlaying(false);
+    t0 = performance.now() - (+scrub.value) * total();
+  });
+  scrub.addEventListener("change", () => scrubbing = false);
+
+  let held = 0;
+  function elapsed() {
+    if (!playing) return held;
+    held = performance.now() - t0;
+    if (held > total()) {
+      if (looping) { t0 = performance.now(); seed = Math.random() * 10; held = 0; }
+      else { held = total(); setPlaying(false); }
+    }
+    return held;
+  }
+
+  addEventListener("keydown", (e) => {
+    if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+    if (e.code === "Space") { e.preventDefault(); playBtn.click(); }
+    if (e.key === "r") { t0 = performance.now(); held = 0; setPlaying(true); }
+    if (e.key === "n") { seed = Math.random() * 10; }
+  });
+
+  // ---- drag & drop ----------------------------------------------------------
+  const box = canvas.parentElement;
+  ["dragenter","dragover"].forEach(ev => box.addEventListener(ev, e => {
+    e.preventDefault(); box.style.borderColor = "var(--primary)";
+  }));
+  ["dragleave","drop"].forEach(ev => box.addEventListener(ev, e => {
+    e.preventDefault(); box.style.borderColor = "var(--line)";
+  }));
+  // read as a data URL rather than createObjectURL: a blob: URL dies with the
+  // page, so it could not be restored on the next open
+  function useFile(f) {
+    if (!f || !f.type.startsWith("image/")) return;
+    const fr = new FileReader();
+    fr.onload = () => { storedBg = fr.result; loadImage(storedBg); save(); };
+    fr.readAsDataURL(f);
+  }
+  box.addEventListener("drop", e => useFile(e.dataTransfer.files[0]));
+  document.getElementById("file").addEventListener("change", e => useFile(e.target.files[0]));
+
+  // ---- draw -----------------------------------------------------------------
+  function hexRGB(hex) {
+    const n = parseInt(hex.slice(1), 16);
+    return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255];
+  }
+
+  function frame() {
+    const ms = elapsed();
+    const dur = Math.max(state.duration, 100);
+    const fade = Math.max(state.fade, 0);
+    const progress = ms / dur;
+    const env = ms <= dur ? 1 : (fade > 0 ? Math.max(0, 1 - (ms - dur) / fade) : 0);
+
+    if (!scrubbing) scrub.value = String(Math.min(1, ms / total()));
+    const closeMs = state.close_at * dur;
+    phase.className = "phase " + (ms >= dur ? "fade" : "burst");
+    phase.textContent = ms >= dur
+      ? `fade  ${Math.round(ms)}ms  env ${env.toFixed(2)}`
+      : `burst ${Math.round(ms)}ms  close@${Math.round(closeMs)}`;
+
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0.02, 0.04, 0.04, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.bindVertexArray(vao);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+
+    gl.disable(gl.BLEND);
+    if (showBgEl.checked) {
+      gl.useProgram(bgProg);
+      gl.uniform1i(bgUni.tex, 0);
+      gl.uniform1f(bgUni.dim, +bgDimEl.value);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    }
+
+    // the shader writes premultiplied alpha, exactly as CTexPassElement expects
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+
+    gl.useProgram(glitchProg);
+    gl.uniform1i(uni.tex, 0);
+    gl.uniform1f(uni.hasTex, hasTexEl.checked ? 1 : 0);
+    gl.uniform2f(uni.uvOffset, 0, 0);
+    gl.uniform2f(uni.uvScale, 1, 1);
+    gl.uniform2f(uni.resolution, canvas.width, canvas.height);
+    gl.uniform1f(uni.progress, progress);
+    gl.uniform1f(uni.env, env);
+    gl.uniform1f(uni.seed, seed);
+    gl.uniform1f(uni.strength, state.strength);
+    gl.uniform1f(uni.aberration, state.aberration);
+    gl.uniform1f(uni.blocks, state.blocks);
+    gl.uniform1f(uni.noiseAmount, state.noise);
+    gl.uniform1f(uni.scanlines, state.scanlines);
+    gl.uniform1f(uni.roll, state.roll);
+    gl.uniform1f(uni.melt, state.melt);
+    gl.uniform1f(uni.vignette, state.vignette);
+    gl.uniform1f(uni.backdropAlpha, state.backdrop_alpha);
+    gl.uniform3fv(uni.colBackdrop, hexRGB(state["col.backdrop"]));
+    gl.uniform3fv(uni.colFringe1, hexRGB(state["col.fringe1"]));
+    gl.uniform3fv(uni.colFringe2, hexRGB(state["col.fringe2"]));
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    drawCaption(ms, dur, env);
+    requestAnimationFrame(frame);
+  }
+
+  // Mirrors CGlitchCloseManager::drawCaption: burst only (never the fade tail),
+  // gated on text_at, optional blink.
+  const capEl = document.getElementById("caption");
+  function drawCaption(ms, dur, env) {
+    if (!capEl) return; // degrade to "no caption" rather than killing the frame loop
+    const txt = String(state.text || "");
+    const on = txt.length > 0 && ms < dur && (ms / dur) >= state.text_at
+      && !(state.text_blink > 0 && Math.floor(ms / state.text_blink) % 2 !== 0);
+    if (!on) { capEl.style.display = "none"; return; }
+
+    // pt -> px at the image's native resolution, then scaled by how large the
+    // canvas is actually being displayed
+    const shown = canvas.clientHeight || 1;
+    const k = shown / (imgH || 1);
+    capEl.textContent = txt;
+    capEl.style.display = "block";
+    capEl.style.fontFamily = state.font || "monospace";
+    capEl.style.fontSize = (state.text_size * 1.333 * k) + "px";
+    capEl.style.color = state["col.text"];
+    capEl.style.opacity = String(state.text_alpha * env);
+    capEl.style.padding = (state.text_padding * k) + "px";
+    capEl.style.borderRadius = (state.text_bg_round * k) + "px";
+    const bg = hexRGB(state["col.text_bg"]);
+    capEl.style.background = `rgba(${Math.round(bg[0]*255)},${Math.round(bg[1]*255)},${Math.round(bg[2]*255)},${state.text_bg_alpha * env})`;
+  }
+
+  const restored = loadStored();
+  if (restored) {
+    if (restored.ui) {
+      hasTexEl.checked = restored.ui.hasTex !== false;
+      showBgEl.checked = restored.ui.showBg !== false;
+      if (typeof restored.ui.bgDim === "number") {
+        bgDimEl.value = restored.ui.bgDim;
+        bgDimV.textContent = restored.ui.bgDim.toFixed(2);
+      }
+      if (restored.ui.looping === false) { looping = false; loopBtn.classList.remove("on"); }
+    }
+    if (restored.bg) storedBg = restored.bg;
+    syncInputsQuiet();
+  }
+
+  emit();
+  setPlaying(true);
+  if (storedBg) loadImage(storedBg);
+  else if (window.DEFAULT_BG) loadImage(window.DEFAULT_BG);
+  else { imgW = 1200; imgH = 800; resize(); }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
