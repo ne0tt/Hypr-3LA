@@ -596,15 +596,22 @@ blend go through the renderer wrappers for the same reason.
 As with Feed-Loss, closing first and animating afterwards means the layout has
 already re-tiled and the effect plays over the neighbours that took the space.
 The dispatcher fixes the ordering: the collapse plays over the still-open
-window, and the real close request goes out at `close_at` × `duration` — while
-the burst is still at full strength.
+window, and the real close request goes out at `close_at` × (`duration` +
+`fade`) — by default on the frame the overlay expires.
 
-**The effect always ends on a glitched frame.** The fade tail never dissolves
-over a live window: the burst holds at full strength until the window has
-actually gone, and only then does `fade` start, dissolving what is left over
-the re-tiled layout. An application that refuses to close (an unsaved-changes
-dialog) can only hold the overlay for `duration` × 2 before the fade starts
-anyway, so a stuck window cannot pin the glitch on screen.
+**The overlay never outlives the window.** The effect owns a fixed `duration` +
+`fade` span and is erased when that span ends, whatever the window does; with
+the default `close_at = 1.0` the close request is only sent at the end of it, so
+the unmap — and the re-tile that follows — cannot happen until the last glitched
+pixel is gone. Nothing is ever drawn over the neighbours that take the space,
+and an application that refuses to close (an unsaved-changes dialog) cannot pin
+the glitch on screen either.
+
+The trade-off is at the other end: the `fade` tail now dissolves back towards
+the **still-live** window, so a long `fade` means watching the untouched window
+come back into view before it closes. Keep `fade` short — tens of ms reads as a
+hard cut — or set `close_at` below 1 to send the close mid-burst, accepting some
+glitch over the re-tiled layout in exchange.
 
 ```lua
 hl.bind("SUPER + Q", function() hl.plugin.glitchclose.close() end,
@@ -634,10 +641,13 @@ pcall(hl.config, {
     plugin = {
         ["3la_glitch_close"] = {
             duration = 700,        -- collapse duration (ms)
-            fade = 250,            -- fade-out tail (ms) AFTER the collapse
+            fade = 80,             -- fade-out tail (ms) AFTER the collapse. it
+                                   -- dissolves back towards the still-live
+                                   -- window, so keep it short
             close_at = 1.0,        -- when glitchclose:close sends the real close,
-                                   -- as a fraction of `duration` (1 = at the end
-                                   -- of the full-strength burst)
+                                   -- as a fraction of `duration` + `fade`
+                                   -- (1 = as the overlay expires, before the
+                                   -- window unmaps)
 
             strength = 1.0,        -- master multiplier on every displacement
                                    -- term (0 = calm, up to 5 = extreme)
@@ -704,9 +714,9 @@ deliberate glitch and anything higher as a strobe.
 
 The caption is composited on top of the shader rather than passed through it, so
 it stays readable while the window behind it tears apart. It is drawn during the
-burst only: once the fade tail starts the close has gone out and neighbours may
-have re-tiled into the box, where a dissolving glitch reads as an effect but a
-legible caption reads as a bug. Note `text_at` is a fraction of `duration` — with
+burst only: the fade tail dissolves back towards the still-live window, where a
+dissolving glitch still reads as an effect but a legible caption on top of a
+window coming back into view reads as a bug. Note `text_at` is a fraction of `duration` — with
 a short `duration` a default of `0.4` leaves very little time on screen.
 
 For matugen theming, pass the globals from your generated `colors.lua`:

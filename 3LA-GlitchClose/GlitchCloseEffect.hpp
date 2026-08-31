@@ -22,9 +22,9 @@ namespace Render {
 }
 
 // Plays a shader-driven glitch collapse over a closing window. Same mechanism as
-// 3LA-Feed-Loss -- snapshot the window, hold its tile slot while the effect runs,
-// send the real close at close_at -- but the entire visual is one GLSL fragment
-// shader rather than a stack of rect/texture draws.
+// 3LA-Feed-Loss -- snapshot the window, hold its tile slot for the whole effect,
+// send the real close only once the overlay is done -- but the entire visual is
+// one GLSL fragment shader rather than a stack of rect/texture draws.
 //
 // Each frame the shader renders into a per-effect framebuffer (identity NDC
 // quad, so no projection math is needed), and that framebuffer is handed to a
@@ -47,13 +47,10 @@ class CGlitchCloseManager {
         CBox                                  localBox;  // monitor-local, logical px
         CBox                                  globalBox; // layout coords, for damage
         std::chrono::steady_clock::time_point start;
-        // the window this effect covers. kept so the fade can wait for it to
-        // actually go: dissolving over a still-mapped window would reveal it
-        // untouched, which is exactly what the effect exists to prevent.
+        // the window this effect covers, kept only to reject a second effect
+        // for the same window: a stale pending entry, or an app-driven close
+        // landing while the dispatcher's effect is still playing.
         PHLWINDOWREF                          window;
-        // set the moment the window is gone (or the hold cap expires); until
-        // then the burst holds at full strength.
-        std::optional<std::chrono::steady_clock::time_point> fadeStart;
         float                                 seed = 0.F;
         // window content captured at effect start. null (capture failed /
         // post-hoc close) drives the shader's hasTex = 0 static-only path.

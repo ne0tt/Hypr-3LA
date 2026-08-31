@@ -29,8 +29,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     }
 
     g_duration       = makeShared<Config::Values::CIntValue>("plugin:3la_glitch_close:duration", "total effect duration in ms", 700, Config::Values::SIntValueOptions{.min = 100});
-    g_fade           = makeShared<Config::Values::CIntValue>("plugin:3la_glitch_close:fade", "overlay fade-out tail after the collapse, in ms", 250, Config::Values::SIntValueOptions{.min = 0});
-    g_closeAt        = makeShared<Config::Values::CFloatValue>("plugin:3la_glitch_close:close_at", "fraction of duration after which glitchclose:close sends the real close (1 = at the end of the full-strength burst)", 1.0F,
+    g_fade           = makeShared<Config::Values::CIntValue>("plugin:3la_glitch_close:fade", "overlay fade-out tail after the collapse, in ms (dissolves back towards the still-live window, so keep it short)", 80, Config::Values::SIntValueOptions{.min = 0});
+    g_closeAt        = makeShared<Config::Values::CFloatValue>("plugin:3la_glitch_close:close_at", "fraction of duration + fade after which glitchclose:close sends the real close (1 = as the overlay expires, before the window unmaps)", 1.0F,
                                                               Config::Values::SFloatValueOptions{.min = 0.F, .max = 1.F});
     g_strength       = makeShared<Config::Values::CFloatValue>("plugin:3la_glitch_close:strength", "master multiplier on all displacement: 0 = calm, 5 = extreme", 1.0F,
                                                               Config::Values::SFloatValueOptions{.min = 0.F, .max = 5.F});

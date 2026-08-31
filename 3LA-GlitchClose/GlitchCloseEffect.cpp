@@ -179,6 +179,15 @@ bool CGlitchCloseManager::beginEffect(const PHLWINDOW& w) {
         return false;
     }
 
+    // one effect per window: a close landing while an effect is already playing
+    // over that window would stack a second overlay on the same box
+    for (const auto& E : m_effects) {
+        if (E.window.lock() == w) {
+            Log::logger->log(Log::TRACE, "[3LA-GlitchClose] skip: effect already playing class='{}'", w->m_class);
+            return false;
+        }
+    }
+
     // child windows (file open/save dialogs etc.): parent() covers xdg-toplevel
     // parents (incl. xdg-foreign) and X11 transient-for, isModal() the X11
     // modal hint, m_dialog the xdg-dialog-v1 modal flag
@@ -252,9 +261,11 @@ bool CGlitchCloseManager::beginEffect(const PHLWINDOW& w) {
 
 // close the focused window, glitch style: the collapse plays over the live
 // window (its tile slot stays occupied), and the real close request goes out at
-// close_at * (duration + fade) — by default at the very end of the fade tail,
-// so the slot is held for the whole effect and neighbors only re-tile once the
-// overlay has fully dissolved, not while it's still fading on top of them.
+// close_at * (duration + fade) — by default on the frame the overlay expires,
+// so the effect is off screen before the window unmaps and the neighbours
+// re-tile. The cost of ending first is at the other end: the fade tail
+// dissolves back towards the still-live window, so keep `fade` short, or set
+// close_at < 1 to send the close mid-burst.
 SDispatchResult CGlitchCloseManager::dispatchClose() {
     const auto W = Desktop::focusState()->window();
     if (!W)
@@ -271,12 +282,14 @@ SDispatchResult CGlitchCloseManager::dispatchClose() {
     }
 
     const double DUR   = std::max<int64_t>(g_duration->value(), 100);
+    const double FADE  = std::max<int64_t>(g_fade->value(), 0);
     const double AT    = std::clamp(g_closeAt->value(), 0.0F, 1.0F);
-    // fraction of `duration` alone, NOT duration + fade: the close has to land
-    // while the burst is still at full strength, so the last frame of the
-    // window on screen is a glitched one. the fade tail then dissolves what is
-    // left over the re-tiled layout, never over the live window.
-    const auto   DELAY = std::chrono::milliseconds(static_cast<int64_t>(DUR * AT));
+    // fraction of the WHOLE overlay lifetime, burst + fade. at the default 1.0
+    // the close only goes out as the overlay expires, so the unmap — and the
+    // re-tile that follows it — cannot happen until the last glitched pixel is
+    // gone. lower values trade that guarantee for a close that lands while the
+    // burst is still running.
+    const auto   DELAY = std::chrono::milliseconds(static_cast<int64_t>((DUR + FADE) * AT));
 
     auto         timer = makeShared<CEventLoopTimer>(
         DELAY,
@@ -302,6 +315,14 @@ void CGlitchCloseManager::onWindowClose(const PHLWINDOW& w) {
     // has anything on screen, so it must not swallow this much-later close.
     const auto   NOW     = std::chrono::steady_clock::now();
     const double DUR     = std::max<int64_t>(g_duration->value(), 100);
+    const double FADE    = std::max<int64_t>(g_fade->value(), 0);
+    const double AT      = std::clamp(g_closeAt->value(), 0.0F, 1.0F);
+    // our own close only goes out at (duration + fade) * close_at, and the app
+    // then takes its own time to unmap: the entry has to stay valid for that
+    // whole span plus a generous slice of app latency, or a slow-but-normal
+    // close is misread as stale and spawns a second effect after the window
+    // has already gone.
+    const double STALE   = (DUR + FADE) * AT + std::max(DUR, 2000.0);
     bool         managed = false;
     std::erase_if(m_pending, [&](const SPending& p) {
         const auto PW = p.window.lock();
@@ -311,7 +332,7 @@ void CGlitchCloseManager::onWindowClose(const PHLWINDOW& w) {
         }
         if (PW == w) {
             g_pEventLoopManager->removeTimer(p.timer); // no-op if already fired
-            managed = elapsedMsBetween(p.start, NOW) < DUR * 2.0;
+            managed = elapsedMsBetween(p.start, NOW) < STALE;
             return true;
         }
         return false;
@@ -342,26 +363,20 @@ void CGlitchCloseManager::onRenderStage(eRenderStage stage) {
 
         const double ELAPSED = elapsedMsBetween(it->start, NOW);
 
-        // Hold at full strength until the window has actually gone. Starting
-        // the fade while it is still mapped would dissolve the glitch and show
-        // the untouched window for the length of the tail. The DUR * 2 cap
-        // stops an app that refuses to die (unsaved-changes dialog) from
-        // pinning the overlay on screen indefinitely.
-        if (!it->fadeStart && ELAPSED >= DUR) {
-            const auto W = it->window.lock();
-            if (!W || !Desktop::View::validMapped(W) || ELAPSED >= DUR * 2.0)
-                it->fadeStart = NOW;
-        }
-
-        const double FADED = it->fadeStart ? elapsedMsBetween(*it->fadeStart, NOW) : 0.0;
-        if (it->fadeStart && FADED >= FADE) {
+        // The overlay owns a fixed [0, DUR + FADE] span and never outlives it,
+        // whatever the window does. dispatchClose sends the real close only at
+        // the end of that span, so the effect is already gone by the time the
+        // slot is vacated: nothing is ever drawn over the layout that re-tiles
+        // into it, and an app that refuses to die cannot pin the glitch on
+        // screen either.
+        if (ELAPSED >= DUR + FADE) {
             g_pHyprRenderer->damageBox(it->globalBox);
             it = m_effects.erase(it); // releases the effect's framebuffers
             continue;
         }
 
-        // FADE == 0 already expired above, so this cannot divide by zero
-        const float ENV = it->fadeStart ? std::max(0.F, 1.F - static_cast<float>(FADED / FADE)) : 1.F;
+        const double FADED = std::max(0.0, ELAPSED - DUR);
+        const float  ENV   = FADE > 0.0 ? std::max(0.F, 1.F - static_cast<float>(FADED / FADE)) : 1.F;
 
         if (EMON == MON) {
             // don't paint over a workspace the closed window was never on
@@ -543,9 +558,9 @@ void CGlitchCloseManager::drawCaption(const CBox& box, const PHLMONITOR& mon, do
     if (g_text->value().empty())
         return;
 
-    // Burst only. By the fade tail the close has gone out and neighbours may
-    // have re-tiled into this box: a dissolving glitch over them reads as an
-    // effect, a legible caption over them reads as a bug.
+    // Burst only. The fade tail dissolves back towards the still-live window,
+    // and a legible caption sitting on top of a window coming back into view
+    // reads as a bug, where a dissolving glitch still reads as an effect.
     if (elapsedMs >= durationMs)
         return;
     if (static_cast<float>(elapsedMs / durationMs) < std::clamp(g_textAt->value(), 0.F, 1.F))
