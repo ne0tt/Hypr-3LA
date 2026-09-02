@@ -34,8 +34,10 @@ def uniform_name(key: str) -> str:
 # knobs the viewer drives from the timeline rather than a slider
 TIMELINE_KEYS = {"duration", "fade", "close_at"}
 
-# config keys with no shader uniform (window filtering, not visuals)
-NON_VISUAL = {"min_size", "ignore_children", "ignore_class", "ignore_title"}
+# config keys with no shader uniform (close plumbing and window filtering, not
+# visuals). `hold` is compositor-side timing: it waits on the real window going
+# away, which the viewer has no equivalent of.
+NON_VISUAL = {"hold", "min_size", "ignore_children", "ignore_class", "ignore_title"}
 
 # the caption is composited by the plugin as a rect + text texture, not by the
 # shader, so these have no uniform and the viewer draws them as an HTML overlay

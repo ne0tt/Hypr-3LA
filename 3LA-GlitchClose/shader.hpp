@@ -17,8 +17,7 @@ void main() {
 }
 )#";
 
-// CCTV/VHS signal collapse. Everything the CPU compositing in 3LA-Feed-Loss did
-// with stacked quads happens here per-pixel instead: time-stepped slice tearing,
+// CCTV/VHS signal collapse, entirely per-pixel: time-stepped slice tearing,
 // macroblock corruption, vertical melt, a rolling bright bar, per-channel
 // chromatic aberration, digital static, scanlines, backdrop collapse, vignette.
 //
@@ -146,9 +145,8 @@ void main() {
 
     // 5) ghost copies: the whole frame echoed sideways at low alpha, added
     //    rather than blended so overlaps brighten. This is what makes a torn
-    //    frame read as a DOUBLED SIGNAL instead of merely displaced strips --
-    //    3LA-Feed-Loss gets it by stacking two extra snapshot draws at +/-
-    //    offset, and it is the single most recognisable part of that look.
+    //    frame read as a DOUBLED SIGNAL instead of merely displaced strips, and
+    //    is the single most recognisable part of the look.
     if (ghost > 0.001) {
         float gdx = (0.004 + 0.026 * P) * ghost * S;
         vec4  g1  = sampleSrc(duv + vec2(gdx, 0.0));

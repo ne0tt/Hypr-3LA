@@ -13,12 +13,6 @@ authors = ["sispx"]
 output = "3LA-Corners/3LA-Corners.so"
 build = ["make -C 3LA-Corners all"]
 
-[3LA-Feed-Loss]
-description = "CCTV signal-lost static burst where a closed window was"
-authors = ["sispx"]
-output = "3LA-Feed-Loss/3LA-Feed-Loss.so"
-build = ["make -C 3LA-Feed-Loss all"]
-
 [3LA-GlitchClose]
 description = "Shader-driven glitch collapse where a closed window was"
 authors = ["sispx"]

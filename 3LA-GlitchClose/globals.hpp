@@ -11,6 +11,7 @@ inline HANDLE                           PHANDLE = nullptr;
 // timing
 inline SP<Config::Values::CIntValue>    g_duration;
 inline SP<Config::Values::CIntValue>    g_fade;
+inline SP<Config::Values::CIntValue>    g_hold;
 inline SP<Config::Values::CFloatValue>  g_closeAt;
 
 // shader knobs

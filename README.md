@@ -1,24 +1,18 @@
 # Hypr-3LA
 
-Three Hyprland plugins that give a tiling desktop a CCTV / surveillance-rig
+Two Hyprland plugins that give a tiling desktop a CCTV / surveillance-rig
 aesthetic: **[3LA-Corners](#3la-corners)** frames every window with
-targeting-reticle corner brackets, **[3LA-Feed-Loss](#3la-feed-loss)**
-kills windows with a "signal lost" static burst instead of letting them blink
-out, and **[3LA-GlitchClose](#3la-glitchclose)** does the same job with a GLSL
-fragment shader rather than stacked quads.
+targeting-reticle corner brackets, and **[3LA-GlitchClose](#3la-glitchclose)**
+kills windows with a GLSL "signal lost" glitch collapse instead of letting them
+blink out.
 
-Feed-Loss and GlitchClose are alternatives to each other, not companions --
-both hook `window.close`, so running them together stacks two overlays on the
-same window. Pick one.
-
-All three are C++ Hyprland plugins built against **Hyprland 0.56.2**, configured
+Both are C++ Hyprland plugins built against **Hyprland 0.56.2**, configured
 either through classic `hyprland.conf` keywords or Hyprland's Lua config
 (`hl.config`), and installable with `hyprpm`.
 
 ```
 3LA-Corners/              corner brackets decoration
-3LA-Feed-Loss/            CPU-composited signal-loss burst
-3LA-GlitchClose/          GLSL shader collapse  (alternative to Feed-Loss)
+3LA-GlitchClose/          GLSL shader signal-loss collapse
 3LA-GlitchClose-Viewer/   WebGL tuner for the shader above
 hyprpm.toml               plugin manifest + Hyprland/plugin commit pins
 ```
@@ -41,18 +35,6 @@ tearing, macroblock corruption, whole-frame ghost copies, chromatic aberration
 and static, with the caption composited on top so it stays legible. The window's
 own border stays clean throughout — the effect is inset strictly inside it.
 
-<details>
-<summary><b>3LA-Feed-Loss</b> — the earlier CPU-composited version</summary>
-
-Same sequence through `feedloss:close`, built from stacked rectangle and texture
-draws rather than a shader:
-
-![demo: three terminals closed with the signal-lost burst](assets/feedloss-demo.gif)
-
-([full-quality mp4](assets/feedloss-demo.mp4))
-
-</details>
-
 ## Install
 
 Via hyprpm (uses `hyprpm.toml` in this repo):
@@ -60,7 +42,7 @@ Via hyprpm (uses `hyprpm.toml` in this repo):
 ```sh
 hyprpm add https://github.com/ne0tt/Hypr-3LA
 hyprpm enable 3LA-Corners
-hyprpm enable 3LA-GlitchClose   # or 3LA-Feed-Loss, not both
+hyprpm enable 3LA-GlitchClose
 ```
 
 Or build and load manually:
@@ -122,20 +104,20 @@ not-yet-loaded plugin can't break the rest of the config:
 
 ```lua
 pcall(hl.config, { plugin = {
-    ["3la_corners"]   = { offset = 10, length = 40, thickness = 1 },
-    ["3la_feed_loss"] = { duration = 900, glitch = 3, text = "SIGNAL LOST" },
+    ["3la_corners"]      = { offset = 10, length = 40, thickness = 1 },
+    ["3la_glitch_close"] = { duration = 700, strength = 1.0, text = "SIGNAL LOST" },
 } })
 ```
 
 (The classic `hyprland.conf` ini keywords work too, with the same option
-names: `plugin { 3la_feed_loss { duration = 900 } }`.)
+names: `plugin { 3la_glitch_close { duration = 700 } }`.)
 
 Live-tweak any option without reloading (`hyprctl keyword` does not work with
 the Lua parser — use `hl.config`):
 
 ```sh
-hyprctl eval 'hl.config({ plugin = { ["3la_feed_loss"] = { glitch = 5 } } })'
-hyprctl getoption plugin:3la_feed_loss:duration   # inspect
+hyprctl eval 'hl.config({ plugin = { ["3la_glitch_close"] = { strength = 2.0 } } })'
+hyprctl getoption plugin:3la_glitch_close:duration   # inspect
 ```
 
 The demo above uses matugen-generated colors — teal static and caption on a
@@ -152,8 +134,6 @@ registration doesn't take:
 
 ```lua
 hl.plugin.load(os.getenv("HOME") .. "/git/Hypr-3LA/3LA-Corners/3LA-Corners.so")
--- 3LA-Feed-Loss is superseded by 3LA-GlitchClose. Do not load both: they both
--- listen to window.close and would stack two overlays on an unmanaged close.
 hl.plugin.load(os.getenv("HOME") .. "/git/Hypr-3LA/3LA-GlitchClose/3LA-GlitchClose.so")
 
 hl.on("hyprland.start", function()
@@ -213,13 +193,12 @@ swallow it. Comment a plugin's settings block out at the same time as its
 `hl.plugin.load` line, or every reload prints one error per option.
 
 **`config/keyboard/keybindings.lua`** — the kill key, falling through to a plain
-close when neither plugin is loaded (`hl.plugin.<name>` only exists while that
-plugin is):
+close when the plugin is not loaded (`hl.plugin.glitchclose` only exists while
+it is):
 
 ```lua
 hl.bind(mainMod .. " + Q", function()
     if pcall(function() hl.plugin.glitchclose.close() end) then return end
-    if pcall(function() hl.plugin.feedloss.close() end) then return end
     hl.dispatch(hl.dsp.window.close())
 end, { description = "Close active window (glitch collapse)" })
 ```
@@ -389,185 +368,23 @@ hl.config({ plugin = { ["3la_corners"] = {
 
 ---
 
-# 3LA-Feed-Loss
-
-Plays a CCTV "signal lost" burst over a window when it closes: the window's own
-content tears apart, scanlined static and a backdrop ramp in over it, a
-`SIGNAL LOST` caption appears, and only then does the window actually close —
-the overlay dissolving in a short fade while the layout re-tiles underneath.
-
-## Timeline
-
-One burst is `duration` ms plus a `fade` ms tail (defaults 900 + 300):
-
-1. **Glitch** (whole burst): the window's *own content* breaks up — a
-   framebuffer snapshot is torn into horizontally displaced slices, with
-   whole-frame jitter, drifting ghost copies and magenta/cyan color fringe on
-   some slices. Escalates over time and never ramps out: the burst ends
-   mid-glitch.
-2. **Collapse** (~40–60%): animated scanlined static ramps in over the still
-   glitching picture, then a backdrop; stray noise bands tear across.
-3. **Caption** (from ~58% to burst end): the blinking `SIGNAL LOST` caption,
-   centered. Burst only — it never lingers into the fade over re-tiled
-   neighbors.
-4. **Close + fade**: the overlay fades out over `fade` ms starting at burst
-   end, and the real close goes out at `close_at` × (`duration` + `fade`)
-   (default: the very end of the fade tail, so the layout re-tiles only
-   once the overlay is fully gone).
-
-The overlay stays **inside the window's border**, so the border ring (and the
-Corners brackets outside it) keeps framing the static until the window
-actually closes.
-
-Post-hoc closes (window died on its own — no snapshot possible) skip the
-content tearing and cut straight to static, backdrop at ~8% and caption at
-~16% of the burst.
-
-## The `feedloss:close` dispatcher (use this to close windows)
-
-If the burst only starts *after* a window is gone, the layout has already
-re-tiled and the static plays over the neighbors that took the space. The
-dispatcher fixes the ordering: it plays the burst over the **still-open**
-window — its tile slot stays occupied, nothing moves — and sends the real
-close request at `close_at` × (`duration` + `fade`) (default 100%: only
-once the burst *and* the fade tail are both over). The re-tile then happens
-after the overlay has fully dissolved, never underneath it.
-
-Bind your kill key to it instead of `killactive` — the plugin registers a Lua
-function, `hl.plugin.feedloss.close()` (see
-[Reference setup](#reference-setup-lua-config) for a bind with a fallback):
-
-```lua
-hl.bind("SUPER + Q", function() hl.plugin.feedloss.close() end,
-    { description = "Close active window (feed loss)" })
-```
-
-(Classic configs can use the dispatcher directly:
-`bind = $mainMod, Q, feedloss:close`.)
-
-Like `killactive` it *requests* the close, so apps can still show "unsaved
-changes" dialogs — the feed comes back if the app refuses to die. Windows that
-close on their own (app exits, `killactive` from elsewhere) still get a
-post-hoc burst. A `feedloss:close` on a window the effect would skip (too
-small, override-redirect, filtered) just closes it normally — the bind never
-silently no-ops.
-
-## Config
-
-Defaults shown:
-
-```lua
-hl.config({ plugin = { ["3la_feed_loss"] = {
-    duration = 900,        -- burst duration (ms); overlay at full strength throughout
-    fade = 300,            -- overlay fade-out tail (ms) appended after the burst
-    close_at = 1.0,        -- feedloss:close sends the real close at this
-                           -- fraction of (duration + fade) (0 = close
-                           -- immediately; 1 = only after the fade tail, so
-                           -- the tile slot is held until the overlay is
-                           -- fully gone)
-
-    static_alpha = 0.55,   -- opacity of the animated static layer (0..1)
-    backdrop_alpha = 0.75, -- opacity of the backdrop behind the static (0..1)
-    glitch = 1,            -- glitch strength: 0 = off, 1 = normal, up to
-                           -- 5 = extreme (scales tear amplitude and the
-                           -- number of slices/bands)
-
-    text = "SIGNAL LOST",  -- caption; "" = no caption
-    text_size = 16,        -- caption font size (pt)
-    text_alpha = 1.0,      -- caption opacity (0..1; 0 = hidden)
-    text_blink = 1,        -- blink the caption (0 = steady)
-    font = "monospace",    -- caption font family
-
-    ["col.text"] = 0,      -- caption color (0 = white)
-    ["col.static"] = 0,    -- static noise tint (0 = neutral gray); baked into
-                           -- the noise textures, regenerated on config reload
-    ["col.backdrop"] = 0,  -- backdrop color (0 = black); alpha comes from
-                           -- backdrop_alpha, not the color
-    ["col.fringe1"] = 0,   -- glitch-slice fringe color A (0 = magenta)
-    ["col.fringe2"] = 0,   -- glitch-slice fringe color B (0 = cyan)
-
-    min_size = 80,         -- skip windows smaller than this on either axis (px);
-                           -- keeps menus/tooltips/popups from triggering bursts
-    ignore_children = 1,   -- skip child windows — file open/save dialogs,
-                           -- transients, modals (0 = burst on them too)
-
-    -- Regex (C++ std::regex, NOT a Lua pattern) of window classes to never
-    -- burst on; "" = filter off. The default catches portal file choosers
-    -- (VS Code / Electron / Flatpak apps), which are separate processes and
-    -- never look like children on Wayland.
-    ignore_class = "^(xdg-desktop-portal.*)$",
-
-    -- Same idea, matched against the window TITLE, for dialogs class alone
-    -- can't identify, e.g. "^(Open File|Save As|Select Folder)$".
-    -- "" (default) = filter off.
-    ignore_title = "",
-} } })
-```
-
-## Notes
-
-- The effect is **screen-space**: it plays over the rectangle the window
-  occupied when the burst started. Via `feedloss:close` that rectangle stays
-  occupied by the window itself until `close_at` fires; for post-hoc bursts
-  anything that moves into it (a neighbor re-tiling into the gap, a
-  workspace slide) gets drawn over for the remaining duration.
-- It composes with Hyprland's own close animation: the fade-out snapshot plays
-  underneath the static. Setting the `fadeOut` animation faster (or off) makes
-  the "feed cut" read harder; leaving it on reads more like corruption.
-- The overlay renders at `RENDER_POST_WINDOWS`, i.e. above all windows but below
-  top/overlay layers — bars and notifications stay on top of the static.
-- If the workspace the window was on stops being the monitor's active (or
-  active special) workspace mid-burst, drawing is suppressed; the burst still
-  expires on its own schedule.
-- X11 override-redirect surfaces and windows smaller than `min_size` don't
-  trigger the effect, so context menus and tooltips stay quiet. With
-  `ignore_children` on (default), child windows — xdg toplevels with a parent
-  (including xdg-foreign), X11 transients/modals, xdg-dialog-v1 modals — are
-  skipped too.
-- Portal file choosers (`xdg-desktop-portal-gtk` etc.) are toplevels of a
-  *separate process*; Electron apps like VS Code don't pass them a parent
-  handle on Wayland, so they don't count as children. The `ignore_class`
-  regex catches them by class instead (`ignore_title` exists for dialogs
-  class can't identify).
-- The class/title filters match against the window's *cached* class/title:
-  the close event fires during unmap, when the xdg toplevel resource (what
-  `fetchClass()` reads) can already be destroyed and would report `""`.
-- Every burst start is logged at DEBUG level
-  (`[3LA-Feed-Loss] burst on class='..' title='..'`) — check
-  `hyprctl rollinglog` when a window bursts that you expected filtered.
-- The glitch phase draws slices of a `makeSnapshotFB` capture taken when the
-  effect starts, so it shows the window as it looked at the moment of "death" —
-  everything is clipped to the window box, and slice geometry holds for 60 ms
-  per step so it reads as tearing rather than shimmer. The snapshot framebuffer
-  (potentially monitor-sized) lives only for the effect's duration.
-- The static is 8 pre-baked 128×128 scanlined noise frames cycled every 45 ms
-  and stretched over the window box — deliberately blocky, VHS-style. Textures
-  are built lazily on first use and freed on unload.
-- The caption texture is rendered once (at 2× size for hidpi sharpness) and
-  cached; a config reload rebuilds it, so text/font/color changes apply live.
-- While a burst runs its box is damaged every frame — cost is a sub-second
-  full-redraw of that rectangle per closed window, nothing when idle.
-
 # 3LA-GlitchClose
 
-Same close mechanism as [3LA-Feed-Loss](#3la-feed-loss) — the effect plays over
-the **still-open** window, the real close goes out at the end — but the whole
-visual is a single GLSL fragment shader instead of a stack of rectangle and
-texture draws.
+Plays a CCTV "signal lost" collapse over a window when it closes: the window's
+own content tears apart, static and a backdrop ramp in over it, a `SIGNAL LOST`
+caption appears, and only then does the window actually close.
 
-Feed-Loss fakes its glitch on the CPU: per frame it submits jittered copies of
-the window snapshot, a dozen torn slice quads, fringe rectangles and one of
-eight pre-baked 128×128 noise textures. GlitchClose renders the window snapshot
-through one shader pass into its own framebuffer and composites that. The
-practical differences:
+The whole visual is a single GLSL fragment shader. The window snapshot goes
+through one shader pass into the effect's own framebuffer, which is then
+composited — so:
 
 - displacement is **continuous and per-pixel**, not quantised to slice quads
-- a real v-sync frame tear, which stacked quads cannot express: the seam needs
-  the content on each side evaluated at a different animation step
+- a real v-sync frame tear: the seam needs the content on each side evaluated at
+  a different animation step, which stacked quads cannot express
 - chromatic aberration is a real per-channel UV offset, not a tinted overlay
   rectangle
-- static is sub-pixel and never repeats, instead of cycling 8 fixed frames
-- one draw call per frame instead of ~40
+- static is sub-pixel and never repeats
+- one draw call per frame
 - every knob is a live uniform, so re-running matugen re-themes the effect
   without reloading the plugin
 
@@ -600,25 +417,30 @@ blend go through the renderer wrappers for the same reason.
 
 ## The `glitchclose:close` dispatcher (use this to close windows)
 
-As with Feed-Loss, closing first and animating afterwards means the layout has
-already re-tiled and the effect plays over the neighbours that took the space.
+Closing first and animating afterwards means the layout has already re-tiled and
+the effect plays over the neighbours that took the space.
 The dispatcher fixes the ordering: the collapse plays over the still-open
-window, and the real close request goes out at `close_at` × (`duration` +
-`fade`) — by default on the frame the overlay expires.
+window, and the real close request goes out at `close_at` × `duration` — by
+default on the frame the burst ends.
 
-**The overlay never outlives the window.** The effect owns a fixed `duration` +
-`fade` span and is erased when that span ends, whatever the window does; with
-the default `close_at = 1.0` the close request is only sent at the end of it, so
-the unmap — and the re-tile that follows — cannot happen until the last glitched
-pixel is gone. Nothing is ever drawn over the neighbours that take the space,
-and an application that refuses to close (an unsaved-changes dialog) cannot pin
-the glitch on screen either.
+**It always ends on a glitched window.** After the burst the overlay *holds* at
+full collapse until the window is really gone, and only then runs the `fade`
+tail. Fading earlier would dissolve the glitch back onto the untouched window
+that is still sitting there waiting for the app to unmap — the one thing a
+glitch close must not end on. Two things make the hold sufficient:
 
-The trade-off is at the other end: the `fade` tail now dissolves back towards
-the **still-live** window, so a long `fade` means watching the untouched window
-come back into view before it closes. Keep `fade` short — tens of ms reads as a
-hard cut — or set `close_at` below 1 to send the close mid-burst, accepting some
-glitch over the re-tiled layout in exchange.
+- the window's **own close animation is suppressed** for the duration of the
+  effect (`noAnim` at `setprop` priority, the same slot `hyprctl setprop` uses).
+  Otherwise Hyprland plays its fade-out snapshot of the real window just as the
+  overlay ends, which looks exactly like the window reappearing.
+- `hold` caps the wait (default 1000 ms). An application that refuses to close —
+  an unsaved-changes dialog — gets the fade anyway and its animations back,
+  rather than pinning the glitch on screen.
+
+The tile slot is still held for the whole burst, so nothing is drawn over the
+neighbours until the close actually goes out; only the hold and the fade can
+overlap the re-tile, and by then the collapse is at full opacity. Set `close_at`
+below 1 to send the close mid-burst instead.
 
 ```lua
 hl.bind("SUPER + Q", function() hl.plugin.glitchclose.close() end,
@@ -636,8 +458,7 @@ a close request) still get a post-hoc effect, driven by the `window.close`
 event. That event fires at *unmap*, so the snapshot capture usually fails on
 this path and the shader falls back to its static-only mode (`hasTex = 0`).
 An application that simply **exits on its own** never emits `window.close`
-at all, so it gets no effect — this is inherent to the event, and Feed-Loss
-behaves identically.
+at all, so it gets no effect — this is inherent to the event.
 
 ## Config
 
@@ -648,13 +469,16 @@ pcall(hl.config, {
     plugin = {
         ["3la_glitch_close"] = {
             duration = 700,        -- collapse duration (ms)
-            fade = 80,             -- fade-out tail (ms) AFTER the collapse. it
-                                   -- dissolves back towards the still-live
-                                   -- window, so keep it short
+            fade = 80,             -- fade-out tail (ms), started only once the
+                                   -- window is actually gone
+            hold = 1000,           -- max ms to hold the finished collapse while
+                                   -- waiting for the window to vanish, so the
+                                   -- fade never dissolves back onto a live
+                                   -- window
             close_at = 1.0,        -- when glitchclose:close sends the real close,
-                                   -- as a fraction of `duration` + `fade`
-                                   -- (1 = as the overlay expires, before the
-                                   -- window unmaps)
+                                   -- as a fraction of `duration` (1 = as the
+                                   -- burst ends; the hold then covers the
+                                   -- app's close latency)
 
             strength = 1.0,        -- master multiplier on every displacement
                                    -- term (0 = calm, up to 5 = extreme)
@@ -702,12 +526,11 @@ pcall(hl.config, {
 one shader stage each, so `strength = 2, blocks = 0` gives heavy melt and
 aberration with no slice displacement.
 
-`ghost` is the third. It echoes the **whole frame** sideways at low alpha,
-added rather than blended so overlaps brighten — text and logos come out doubled.
-This is the most recognisable part of the old 3LA-Feed-Loss look, which produced
-it by stacking two extra snapshot draws at ± offset; it is what makes a torn
-frame read as a *doubled signal* rather than merely displaced strips. Turn it
-down to `0` for clean shearing with no echo.
+`ghost` echoes the **whole frame** sideways at low alpha, added rather than
+blended so overlaps brighten — text and logos come out doubled. It is what makes
+a torn frame read as a *doubled signal* rather than merely displaced strips, and
+the most recognisable part of the look. Turn it down to `0` for clean shearing
+with no echo.
 
 `blocks` and `tear` are different things despite both being "tearing". `blocks`
 scatters many short-lived horizontal strips at random offsets. `tear` is a single
@@ -720,11 +543,11 @@ times the seam crosses during the burst; with a short `duration`, 1–2 reads as
 deliberate glitch and anything higher as a strobe.
 
 The caption is composited on top of the shader rather than passed through it, so
-it stays readable while the window behind it tears apart. It is drawn during the
-burst only: the fade tail dissolves back towards the still-live window, where a
-dissolving glitch still reads as an effect but a legible caption on top of a
-window coming back into view reads as a bug. Note `text_at` is a fraction of `duration` — with
-a short `duration` a default of `0.4` leaves very little time on screen.
+it stays readable while the window behind it tears apart. It is drawn through the
+burst and the hold but never the fade: a dissolving glitch still reads as an
+effect, a legible caption dissolving over whatever is behind it reads as a bug.
+Note `text_at` is a fraction of `duration` — with a short `duration` a default of
+`0.4` leaves very little time on screen.
 
 For matugen theming, pass the globals from your generated `colors.lua`:
 
