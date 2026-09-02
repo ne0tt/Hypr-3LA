@@ -3,8 +3,8 @@
 Two Hyprland plugins that give a tiling desktop a CCTV / surveillance-rig
 aesthetic: **[3LA-Corners](#3la-corners)** frames every window with
 targeting-reticle corner brackets, and **[3LA-GlitchClose](#3la-glitchclose)**
-kills windows with a GLSL "signal lost" glitch collapse instead of letting them
-blink out.
+kills windows with a GLSL "signal lost" collapse instead of letting them blink
+out.
 
 Both are C++ Hyprland plugins built against **Hyprland 0.56.2**, configured
 either through classic `hyprland.conf` keywords or Hyprland's Lua config
@@ -23,8 +23,8 @@ its settings.
 
 ## Demo
 
-**3LA-GlitchClose** — three kitty terminals framed by 3LA-Corners, closed one by
-one through `glitchclose:close`. Setup runs at 2×; the closes are real time:
+Three kitty terminals framed by 3LA-Corners, closed one by one through
+`glitchclose:close`. Setup runs at 2×; the closes are real time:
 
 ![demo: three terminals closed with the shader glitch collapse](assets/glitchclose-demo.gif)
 
@@ -72,6 +72,8 @@ hyprctl eval 'dofile(os.getenv("HOME") .. "/.config/hypr/config/plugins.lua")'
 - a C++26 compiler (`g++`); the plugins link nothing — every symbol, including
   the GL entry points, resolves against the running compositor at `dlopen`
 - a GL renderer for 3LA-GlitchClose; it disables itself on a Vulkan backend
+- `python3` for the shader tuner, which regenerates its bundle from the plugin
+  source
 
 **Plugins must be rebuilt whenever Hyprland updates.** The API commit hash is
 checked at load time and a mismatch refuses to load with a notification rather
@@ -82,24 +84,10 @@ If you are installing via `hyprpm`, the `commit_pins` entry in `hyprpm.toml`
 pairs a Hyprland commit with a plugin-repo commit; bump the second hash after
 committing, or `hyprpm update` will keep fetching the older revision.
 
-### Tuning GlitchClose
-
-The shader has a lot of dials. Rather than closing a window every time you want
-to see what one does, use the bundled WebGL tuner — it runs the plugin's actual
-shader over a still image, with sliders and a scrubbable timeline:
-
-```sh
-make -C 3LA-GlitchClose-Viewer install-desktop   # optional: add to the app launcher
-./3LA-GlitchClose-Viewer/run.sh
-```
-
-It has a **copy Lua** button that emits a ready-to-paste `pcall(hl.config, …)`
-block. See [3LA-GlitchClose-Viewer/README.md](3LA-GlitchClose-Viewer/README.md).
-
 ## Configuration
 
-Everything in this README uses Hyprland's Lua config: settings are applied
-with `hl.config`, wrapped in `pcall` at startup so applying config for a
+Everything in this README uses Hyprland's Lua config: settings are applied with
+`hl.config`, wrapped in `pcall` at startup so applying config for a
 not-yet-loaded plugin can't break the rest of the config:
 
 ```lua
@@ -109,8 +97,8 @@ pcall(hl.config, { plugin = {
 } })
 ```
 
-(The classic `hyprland.conf` ini keywords work too, with the same option
-names: `plugin { 3la_glitch_close { duration = 700 } }`.)
+(The classic `hyprland.conf` ini keywords work too, with the same option names:
+`plugin { 3la_glitch_close { duration = 700 } }`.)
 
 Live-tweak any option without reloading (`hyprctl keyword` does not work with
 the Lua parser — use `hl.config`):
@@ -120,9 +108,9 @@ hyprctl eval 'hl.config({ plugin = { ["3la_glitch_close"] = { strength = 2.0 } }
 hyprctl getoption plugin:3la_glitch_close:duration   # inspect
 ```
 
-The demo above uses matugen-generated colors — teal static and caption on a
-theme backdrop — passed straight from the generated Lua color globals into the
-`col.*` options.
+Both plugins read their colours from config on every frame, so feeding
+matugen-generated globals into the `col.*` options re-themes a live effect with
+no plugin reload.
 
 ## Reference setup (Lua config)
 
@@ -146,17 +134,18 @@ require("config.plugins") -- plugin settings (see below)
 ```
 
 **`config/plugins.lua`** — the settings, wrapped in `pcall` so applying config
-for a not-yet-loaded plugin can't break the rest of the startup:
+for a not-yet-loaded plugin can't break the rest of the startup. Only options
+that differ from the defaults need listing:
 
 ```lua
 pcall(hl.config, {
     plugin = {
         ["3la_corners"] = {
-            offset = 10, length = 40, thickness = 1,
+            offset = 5, length = 30, thickness = 2,
             ["col.active"] = primary,   -- matugen color globals
             ["col.inactive"] = primary, -- same color: no focus-based change
-            flash_count = 3, flash_duration = 200,
-            flash_on_focus = 1, focus_flash_count = 2, focus_flash_duration = 75,
+            flash_duration = 150,
+            flash_on_focus = 1, focus_flash_count = 3, focus_flash_duration = 75,
             glow = 1, ["glow.size"] = 10, ["glow.strength"] = 0.4,
             ["col.glow"] = 0,           -- follow the bracket color
         }
@@ -166,26 +155,24 @@ pcall(hl.config, {
 pcall(hl.config, {
     plugin = {
         ["3la_glitch_close"] = {
-            duration = 350, fade = 20, close_at = 1.0,
-            strength = 0.38, aberration = 0.56, blocks = 0.15, noise = 0.00,
-            scanlines = 0.37, roll = 0.08, melt = 0.10, vignette = 0.00,
-            tear = 0.55, tear_speed = 2.0, ghost = 0.6,
-            backdrop_alpha = 0.3,
+            duration = 400, fade = 10, close_at = 1.0, -- hold left at its 1000 ms default
+            strength = 0.38, aberration = 0.56, blocks = 0.45, noise = 0.00,
+            scanlines = 0.8, roll = 0.08, melt = 0.10, vignette = 0.00,
+            tear = 0.55, tear_speed = 2.0, ghost = 0.8,
+            backdrop_alpha = 0.5,
             ["col.backdrop"] = on_secondary,   -- matugen color globals
             ["col.fringe1"] = on_error,
             ["col.fringe2"] = primary,
 
-            text = "SIGNAL LOST", text_size = 16, text_at = 0.25,
-            text_padding = 14, text_bg_round = 4, text_bg_alpha = 0.85,
-            ["col.text"] = 0,      -- 0 = white
-            ["col.text_bg"] = 0,   -- 0 = red
+            text = "SIGNAL LOST", text_size = 26, text_alpha = 0.85,
+            text_at = 0.15, text_blink = 10,
+            text_padding = 14, text_bg_round = 0, text_bg_alpha = 0.55,
+            ["col.text"] = 0,             -- 0 = white
+            ["col.text_bg"] = on_error,
         }
     }
 })
 ```
-
-Re-running matugen re-themes a live effect: every colour is read as a shader
-uniform each frame, so no plugin reload is needed.
 
 Note that `hl.config` reports `unknown config key` **per key** for a plugin that
 is not loaded, and does so *without raising* — the surrounding `pcall` does not
@@ -215,11 +202,10 @@ hl.bind(mainMod .. " + SHIFT + G",
 
 # 3LA-Corners
 
-Draws decorative corner brackets outside every window's border. Each corner
-gets two line segments (horizontal + vertical) offset outside the window
-border, like a targeting reticle. The focused window and unfocused windows can
-be given different colors, and either window spawn or focus gain can trigger a
-flash.
+Draws decorative corner brackets outside every window's border. Each corner gets
+two line segments (horizontal + vertical) offset outside the window border, like
+a targeting reticle. The focused window and unfocused windows can be given
+different colors, and either window spawn or focus gain can trigger a flash.
 
 ## Config
 
@@ -266,7 +252,7 @@ brackets settle to steady on. The two burst types are configured independently:
 
 The focus flash needs **both** `flash_on_focus = 1` and a non-zero
 `focus_flash_count`; setting either to `0` disables it. `flash_count = 0`
-disables the spawn flash only — the two are configured independently.
+disables the spawn flash only.
 
 **The spawn burst has priority.** A focus flash cannot preempt a spawn burst
 that is still running; it is dropped, and the spawn burst plays to completion.
@@ -320,8 +306,8 @@ outright, so none of these affect the brackets:
 - window fade-in/out and workspace-move alpha
 
 Only two things set the final alpha: the alpha channel of the configured color
-(`col.active` / `col.inactive`) and the flash envelope. Trade-off: brackets pop
-in at full opacity when a window opens rather than fading with it.
+(`col.active` / `col.inactive`) and the flash envelope. The trade-off is that
+brackets pop in at full opacity when a window opens rather than fading with it.
 
 > **If unfocused brackets look "dimmed", check `col.inactive` before suspecting
 > opacity.** With `col.inactive = 0` the brackets follow
@@ -351,9 +337,6 @@ hl.config({ plugin = { ["3la_corners"] = {
   `offset + thickness` per side so brackets never overlap neighbors.
 - Brackets are hidden on fullscreen windows. A burst armed on such a window still
   expires on its own schedule, since expiry is time-based rather than frame-driven.
-- **Breaking:** the old `color` option was renamed to `col.active`. `color` is no
-  longer registered and Hyprland will report it as an unknown option — rename it
-  in your config.
 - Active state is read per-frame from `Desktop::focusState()->isWindowActive()`,
   and the plugin listens on the `window.active` event to damage both the window
   losing focus and the one gaining it, so brackets repaint immediately on focus
@@ -362,9 +345,6 @@ hl.config({ plugin = { ["3la_corners"] = {
 - While a flash is running the decoration damages itself every frame to drive the
   animation, so `flash_on_focus = 1` costs a short burst of redraws per focus
   change. On a heavily loaded GPU prefer a low `focus_flash_count`.
-- **Removed:** `active_opacity` / `inactive_opacity` no longer exist. They fought
-  with the compositor's own opacity handling; brackets are now always full alpha.
-  Remove them from your config or Hyprland will report unknown options.
 
 ---
 
@@ -374,18 +354,16 @@ Plays a CCTV "signal lost" collapse over a window when it closes: the window's
 own content tears apart, static and a backdrop ramp in over it, a `SIGNAL LOST`
 caption appears, and only then does the window actually close.
 
-The whole visual is a single GLSL fragment shader. The window snapshot goes
-through one shader pass into the effect's own framebuffer, which is then
-composited — so:
+The whole visual is one GLSL fragment shader — the window snapshot goes through
+a single pass into the effect's own framebuffer, which is then composited. So:
 
-- displacement is **continuous and per-pixel**, not quantised to slice quads
-- a real v-sync frame tear: the seam needs the content on each side evaluated at
-  a different animation step, which stacked quads cannot express
-- chromatic aberration is a real per-channel UV offset, not a tinted overlay
-  rectangle
+- displacement is **continuous and per-pixel**
+- the v-sync frame tear is real: the seam has the content on each side evaluated
+  at a different animation step
+- chromatic aberration is a genuine per-channel UV offset
 - static is sub-pixel and never repeats
 - one draw call per frame
-- every knob is a live uniform, so re-running matugen re-themes the effect
+- every knob is a live uniform, so re-running matugen re-themes a running effect
   without reloading the plugin
 
 ## How it renders
@@ -408,7 +386,8 @@ inside it, and carrying that rotation in the mapping is what keeps the tearing
 running across the window instead of down it. For the same reason the composite
 does *not* set `flipEndFrame` — that flag composes the monitor transform's
 inverse into the texture transform, which is right for a snapshot FB but would
-rotate the finished effect a second time.
+rotate the finished effect a second time. The mapping is built once per effect
+and rebuilt only if the monitor is rescaled or rotated under a live collapse.
 
 Program binding goes through `g_pHyprOpenGL->useShader()` rather than raw
 `glUseProgram()`: `CHyprOpenGLImpl` caches the bound program to skip redundant
@@ -418,10 +397,10 @@ blend go through the renderer wrappers for the same reason.
 ## The `glitchclose:close` dispatcher (use this to close windows)
 
 Closing first and animating afterwards means the layout has already re-tiled and
-the effect plays over the neighbours that took the space.
-The dispatcher fixes the ordering: the collapse plays over the still-open
-window, and the real close request goes out at `close_at` × `duration` — by
-default on the frame the burst ends.
+the effect plays over the neighbours that took the space. The dispatcher fixes
+the ordering: the collapse plays over the still-open window, and the real close
+request goes out at `close_at` × `duration` — by default on the frame the burst
+ends.
 
 **It always ends on a glitched window.** After the burst the overlay *holds* at
 full collapse until the window is really gone, and only then runs the `fade`
@@ -437,7 +416,7 @@ glitch close must not end on. Two things make the hold sufficient:
   an unsaved-changes dialog — gets the fade anyway and its animations back,
   rather than pinning the glitch on screen.
 
-The tile slot is still held for the whole burst, so nothing is drawn over the
+The tile slot is held for the whole burst, so nothing is drawn over the
 neighbours until the close actually goes out; only the hold and the fade can
 overlap the re-tile, and by then the collapse is at full opacity. Set `close_at`
 below 1 to send the close mid-burst instead.
@@ -457,8 +436,8 @@ Windows closed by something else (an external `killactive`, an app responding to
 a close request) still get a post-hoc effect, driven by the `window.close`
 event. That event fires at *unmap*, so the snapshot capture usually fails on
 this path and the shader falls back to its static-only mode (`hasTex = 0`).
-An application that simply **exits on its own** never emits `window.close`
-at all, so it gets no effect — this is inherent to the event.
+An application that simply **exits on its own** never emits `window.close` at
+all, so it gets no effect — this is inherent to the event.
 
 ## Config
 
@@ -500,7 +479,7 @@ pcall(hl.config, {
             ["col.fringe2"] = 0,   -- 0 = cyan
 
             -- Caption drawn OVER the shader output (not fed through the
-            -- glitch, so it stays legible). Burst only, never the fade tail.
+            -- glitch, so it stays legible). Burst and hold, never the fade.
             text = "SIGNAL LOST",  -- "" turns the caption off entirely
             font = "monospace",
             text_size = 16,        -- pt
@@ -562,19 +541,23 @@ effect with no plugin reload.
 
 ## Tuning it
 
-[`3LA-GlitchClose-Viewer/`](3LA-GlitchClose-Viewer) is a WebGL2 tuner: scrub the
-close animation over a still image, move the sliders, copy the result straight
-into `plugins.lua` — rather than closing a terminal every time you want to see
-what a value does.
+The shader has a lot of dials, and closing a terminal every time you want to see
+what one does gets old fast. [`3LA-GlitchClose-Viewer/`](3LA-GlitchClose-Viewer)
+is a WebGL2 tuner that runs the plugin's actual shader over a still image: scrub
+the close animation on a timeline, move the sliders, then hit **copy Lua** for a
+ready-to-paste `pcall(hl.config, …)` block.
 
 ```sh
-make -C 3LA-GlitchClose-Viewer open
+make -C 3LA-GlitchClose-Viewer open            # build the bundle and open it
+make -C 3LA-GlitchClose-Viewer install-desktop # optional: add to the app launcher
+./3LA-GlitchClose-Viewer/run.sh
 ```
 
 It has no shader of its own. `sync.py` extracts the GLSL from `shader.hpp` and
 the option list — keys, defaults, min/max — from `main.cpp`, so the controls are
 whatever the plugin currently registers, and a config key with no matching
-uniform is a build error rather than a dead slider.
+uniform is a build error rather than a dead slider. See
+[3LA-GlitchClose-Viewer/README.md](3LA-GlitchClose-Viewer/README.md).
 
 ## Notes
 
