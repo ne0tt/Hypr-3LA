@@ -583,8 +583,15 @@ Instead, at `RENDER_POST_WINDOWS`:
    keeps owning positioning, clipping, damage and colour management
 
 Because `makeSnapshotFB()` may return a monitor-sized framebuffer rather than a
-window-sized one, `uvOffset` / `uvScale` uniforms map the window's sub-rect onto
-0..1 — the glitch geometry stays window-local either way.
+window-sized one, the `uvOffset` / `uvXf` uniforms map the window's sub-rect onto
+0..1 — the glitch geometry stays window-local either way. `uvXf` is a full `mat2`
+rather than a scale because that snapshot is rendered through the monitor's own
+projection: on a rotated (portrait) monitor the window's pixels sit rotated
+inside it, and carrying that rotation in the mapping is what keeps the tearing
+running across the window instead of down it. For the same reason the composite
+does *not* set `flipEndFrame` — that flag composes the monitor transform's
+inverse into the texture transform, which is right for a snapshot FB but would
+rotate the finished effect a second time.
 
 Program binding goes through `g_pHyprOpenGL->useShader()` rather than raw
 `glUseProgram()`: `CHyprOpenGLImpl` caches the bound program to skip redundant

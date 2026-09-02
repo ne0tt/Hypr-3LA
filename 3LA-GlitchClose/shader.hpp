@@ -22,12 +22,17 @@ void main() {
 // macroblock corruption, vertical melt, a rolling bright bar, per-channel
 // chromatic aberration, digital static, scanlines, backdrop collapse, vignette.
 //
-// UV convention: v_texcoord.y == 0 is the BOTTOM of the window. Framebuffer
-// textures are stored bottom-up (which is why the composite step sets
-// flipEndFrame), and the plugin's own FB inherits that, so the two flips cancel
-// and `tex` can be sampled without any flip here. uvOffset/uvScale map the
-// window's sub-rect of `tex` onto 0..1, since makeSnapshotFB may hand back a
-// monitor-sized framebuffer rather than a window-sized one.
+// UV convention: v_texcoord.y == 0 is the BOTTOM of the window, x runs left to
+// right across it, both in the monitor's LOGICAL orientation -- so every tear,
+// slice and melt below is authored in screen space and stays that way whatever
+// transform the monitor is on.
+//
+// uvOffset/uvXf map that local uv onto the snapshot texture: makeSnapshotFB
+// hands back a monitor-sized framebuffer rendered through the monitor's own
+// projection, so on a rotated (portrait) monitor the window's pixels sit
+// ROTATED inside it. uvXf is the full 2x2 of that mapping -- rotation, flips
+// and the bottom-up framebuffer storage included -- not just a scale, so the
+// glitch keeps tearing across the window instead of down it.
 inline const std::string GLITCH_FRAG = R"#(#version 300 es
 
 precision highp float;
@@ -38,8 +43,8 @@ layout(location = 0) out vec4 fragColor;
 uniform sampler2D tex;
 uniform float hasTex;       // 0.0 = capture failed, synthesise everything
 
-uniform vec2  uvOffset;     // window sub-rect of `tex`
-uniform vec2  uvScale;
+uniform vec2  uvOffset;     // local uv (0,0) in `tex`
+uniform mat2  uvXf;         // local uv basis in `tex`, carries the monitor transform
 uniform vec2  resolution;   // this framebuffer, in px
 
 uniform float progress;     // 0..1 over the burst, keeps climbing in the fade tail
@@ -83,7 +88,7 @@ vec4 sampleSrc(vec2 uv) {
         return vec4(0.0);
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
         return vec4(0.0);
-    return texture(tex, uvOffset + uv * uvScale);
+    return texture(tex, uvOffset + uvXf * uv);
 }
 
 void main() {

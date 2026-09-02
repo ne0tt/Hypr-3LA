@@ -251,7 +251,7 @@
   }
 
   const uni = {};
-  for (const n of ["tex","hasTex","uvOffset","uvScale","resolution","progress","env","seed",
+  for (const n of ["tex","hasTex","uvOffset","uvXf","resolution","progress","env","seed",
                    "strength","aberration","blocks","noiseAmount","scanlines","roll","melt",
                    "vignette","backdropAlpha","colBackdrop","colFringe1","colFringe2"])
     uni[n] = gl.getUniformLocation(glitchProg, n);
@@ -260,8 +260,9 @@
   // ---- texture --------------------------------------------------------------
   // The plugin samples a framebuffer texture, which is stored bottom-up: its
   // v = 0 is the BOTTOM of the window. FLIP_Y reproduces that from a top-down
-  // HTML image, so uvOffset/uvScale stay identity and the shader behaves the
-  // same as it does in the compositor.
+  // HTML image, so uvOffset/uvXf stay identity and the shader behaves the same
+  // as it does on an untransformed monitor. (In the compositor uvXf also carries
+  // the monitor's rotation; there is nothing to reproduce for a flat canvas.)
   const tex = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, tex);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
@@ -622,7 +623,7 @@
     gl.uniform1i(uni.tex, 0);
     gl.uniform1f(uni.hasTex, hasTexEl.checked ? 1 : 0);
     gl.uniform2f(uni.uvOffset, 0, 0);
-    gl.uniform2f(uni.uvScale, 1, 1);
+    gl.uniformMatrix2fv(uni.uvXf, false, [1, 0, 0, 1]);
     gl.uniform2f(uni.resolution, canvas.width, canvas.height);
     gl.uniform1f(uni.progress, progress);
     gl.uniform1f(uni.env, env);

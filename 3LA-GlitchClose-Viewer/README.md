@@ -75,7 +75,7 @@ make the preview lie:
 - **Y orientation.** The plugin samples a framebuffer texture, stored bottom-up,
   so `v_texcoord.y == 0` is the *bottom* of the window. The viewer sets
   `UNPACK_FLIP_Y_WEBGL` to get the same convention from a top-down HTML image,
-  which leaves `uvOffset`/`uvScale` at identity.
+  which leaves `uvOffset`/`uvXf` at identity.
 - **Premultiplied alpha.** The shader writes `vec4(rgb * a, a)`, so the viewer
   blends with `ONE, ONE_MINUS_SRC_ALPHA` — the same thing `CTexPassElement` does.
 - **Timeline.** Full strength for `duration`, then `fade`. The plugin waits for

@@ -87,7 +87,7 @@ class CGlitchCloseManager {
     // custom uniform names are not in eShaderUniform, so they are resolved by
     // name once at compile time and set with raw glUniform* calls
     struct {
-        GLint tex, hasTex, uvOffset, uvScale, resolution, progress, env, seed;
+        GLint tex, hasTex, uvOffset, uvXf, resolution, progress, env, seed;
         GLint strength, aberration, blocks, noiseAmount, scanlines, roll, melt, tear, tearSpeed, ghost, vignette, backdropAlpha;
         GLint colBackdrop, colFringe1, colFringe2;
     } m_uni = {};

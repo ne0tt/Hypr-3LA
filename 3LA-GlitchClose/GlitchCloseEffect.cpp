@@ -95,7 +95,7 @@ bool CGlitchCloseManager::ensureShader() {
     m_uni.tex           = loc("tex");
     m_uni.hasTex        = loc("hasTex");
     m_uni.uvOffset      = loc("uvOffset");
-    m_uni.uvScale       = loc("uvScale");
+    m_uni.uvXf          = loc("uvXf");
     m_uni.resolution    = loc("resolution");
     m_uni.progress      = loc("progress");
     m_uni.env           = loc("env");
@@ -449,16 +449,47 @@ void CGlitchCloseManager::renderToTarget(const SEffect& e, double elapsedMs, dou
 
     const auto  SNAP = e.snapshot ? e.snapshot->getTexture() : nullptr;
 
-    // Which sub-rect of the snapshot the window occupies. makeSnapshotFB can
-    // hand back a monitor-sized framebuffer instead of a window-sized one, and
-    // framebuffer textures are stored bottom-up, so v is measured from the
-    // window's bottom edge.
-    Vector2D uvOff{0.0, 0.0}, uvScl{1.0, 1.0};
+    // Where the window's pixels live inside the snapshot. makeSnapshotFB can hand
+    // back a monitor-sized framebuffer instead of a window-sized one, and it is
+    // rendered through the monitor's OWN projection: on a rotated monitor that
+    // projection turns logical pixels into panel pixels, so the window sits
+    // rotated (and, for 90/270, in a framebuffer whose axes are swapped) inside
+    // it. Mapping only a scale therefore samples the wrong rect and feeds the
+    // shader a sideways window, which is what made the tearing run down a
+    // portrait screen instead of across it.
+    //
+    // So build the full affine map from the shader's local uv (x right, y UP,
+    // both in logical/screen orientation) to snapshot uv, by pushing three
+    // corners through the monitor matrix.
+    //
+    // ORDER MATTERS: the bottom-up flip belongs on the LOGICAL y axis, before
+    // the matrix -- that is the axis the shader's own uv convention is defined
+    // against. Flipping the panel's y afterwards instead is the same thing on a
+    // landscape monitor, but on a 90/270 one the matrix has swapped the axes in
+    // between, so the two flips are about different axes and the sampled window
+    // comes out rotated 180 degrees. On an untransformed monitor the matrix is
+    // identity and this collapses back to the plain offset/scale it replaces.
+    Vector2D uvOff{0.0, 0.0};
+    float    uvXf[4] = {1.F, 0.F, 0.F, 1.F}; // column-major mat2: {du, dv}
     if (SNAP && (SNAP->m_size - MON->m_pixelSize).size() < 2.0) {
         const double SW = SNAP->m_size.x, SH = SNAP->m_size.y;
+        const double TY = MON->m_transformedSize.y; // logical px, pre-matrix
         const CBox   PX = CBox{e.localBox}.scale(MON->m_scale);
-        uvOff = {PX.x / SW, (SH - PX.y - PX.h) / SH};
-        uvScl = {PX.w / SW, PX.h / SH};
+        const auto   M  = MON->getTransformMatrix().getMatrix(); // logical px -> panel px
+
+        auto         toTex = [&](double u, double v) {
+            const double   LX = PX.x + u * PX.w;
+            const double   LY = TY - (PX.y + (1.0 - v) * PX.h); // v is up, boxes are y-down
+            const Vector2D P{M[0] * LX + M[1] * LY + M[2], M[3] * LX + M[4] * LY + M[5]};
+            return Vector2D{P.x / SW, P.y / SH};
+        };
+
+        const Vector2D O = toTex(0.0, 0.0), DU = toTex(1.0, 0.0) - O, DV = toTex(0.0, 1.0) - O;
+        uvOff   = O;
+        uvXf[0] = DU.x;
+        uvXf[1] = DU.y;
+        uvXf[2] = DV.x;
+        uvXf[3] = DV.y;
     }
 
     const CHyprColor BG = colorOr(g_backdropColor, CHyprColor{0.F, 0.F, 0.F, 1.F});
@@ -487,7 +518,7 @@ void CGlitchCloseManager::renderToTarget(const SEffect& e, double elapsedMs, dou
     glUniform1i(m_uni.tex, 0);
     glUniform1f(m_uni.hasTex, SNAP ? 1.F : 0.F);
     glUniform2f(m_uni.uvOffset, uvOff.x, uvOff.y);
-    glUniform2f(m_uni.uvScale, uvScl.x, uvScl.y);
+    glUniformMatrix2fv(m_uni.uvXf, 1, GL_FALSE, uvXf);
     glUniform2f(m_uni.resolution, FBSIZE.x, FBSIZE.y);
     glUniform1f(m_uni.progress, T);
     glUniform1f(m_uni.env, env);
@@ -531,7 +562,12 @@ void CGlitchCloseManager::drawEffect(const SEffect& e, const PHLMONITOR& mon, do
     d.tex          = TEX;
     d.box          = CBox{e.localBox}.scale(mon->m_scale).round();
     d.a            = 1.F;
-    d.flipEndFrame = true; // FB textures are y-flipped vs normal draws
+    // NOT flipEndFrame: that flag makes Hyprland compose the monitor transform's
+    // inverse into the texture's own transform, which is right for a snapshot FB
+    // (rendered in panel orientation) but wrong here -- the shader authors this
+    // texture in logical orientation, so on a rotated monitor the flag rotated
+    // the finished effect a further 90 degrees inside its box. It is a no-op on
+    // an untransformed monitor, so dropping it changes nothing there.
     d.damage       = CRegion{d.box};
     g_pHyprRenderer->m_renderPass.add(makeUnique<CTexPassElement>(d));
 
