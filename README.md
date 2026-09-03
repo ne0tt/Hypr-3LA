@@ -35,30 +35,156 @@ tearing, macroblock corruption, whole-frame ghost copies, chromatic aberration
 and static, with the caption composited on top so it stays legible. The window's
 own border stays clean throughout — the effect is inset strictly inside it.
 
-## Install
+## Requirements
 
-Via hyprpm (uses `hyprpm.toml` in this repo):
+### To run
+
+| | |
+|---|---|
+| **Hyprland 0.56.2** | Matched on *commit hash*, not version string, so two 0.56.2 builds from different commits still mismatch — see [Rebuilding after a Hyprland update](#rebuilding-after-a-hyprland-update) |
+| **A GL renderer** | 3LA-GlitchClose needs raw GL calls; on a Vulkan backend it logs an error, raises a notification and disables itself rather than misbehaving. 3LA-Corners is unaffected. |
+
+Nothing else. The built `.so` links only the C++ runtime — every Hyprland and GL
+symbol (183 of them in 3LA-GlitchClose) is deliberately left undefined and
+resolves against the running compositor at `dlopen`. That is why there is no
+`-l` flag anywhere in the Makefiles, and why the plugin has no shared-library
+dependencies of its own to install.
+
+### To build
+
+On Arch, everything comes from the official repos:
 
 ```sh
+sudo pacman -S --needed hyprland gcc make binutils pkgconf
+```
+
+| package | provides | why |
+|---|---|---|
+| `hyprland` | `/usr/include/hyprland`, `/usr/share/pkgconfig/hyprland.pc`, `hyprpm` | the headers the plugins compile against |
+| `gcc` | `g++` | the Makefiles ask for `-std=c++26` |
+| `make` | `make` | build driver |
+| `binutils` | `strip` | release builds are stripped |
+| `pkgconf` | `pkg-config` | resolves the include paths |
+
+Hyprland's own pkg-config `Requires` — aquamarine, hyprutils, hyprlang,
+hyprgraphics, hyprcursor, cairo, pixman, libdrm, libglvnd, libxkbcommon,
+libinput, wayland, libxcb, xcb-util-errors, freetype2, libpng — are all
+dependencies of the `hyprland` package itself, so a working Hyprland install
+already satisfies them. There is no separate `-devel` split on Arch: the
+headers ship in the same package as the compositor.
+
+**On other distributions** you need whatever package carries the Hyprland
+headers and `hyprland.pc` (often `hyprland-devel`), or a Hyprland built from
+source with its headers installed. Verify before building:
+
+```sh
+pkg-config --modversion hyprland          # must equal your running compositor
+pkg-config --cflags hyprland pixman-1 libdrm
+hyprctl version | head -3
+```
+
+If `pkg-config --modversion hyprland` fails, the headers are missing or not on
+`PKG_CONFIG_PATH`, and every build below will fail with `hyprland.pc not found`.
+
+### Optional
+
+| what | Arch package | needed for |
+|---|---|---|
+| `python3` | `python` | regenerating the shader tuner's bundle (`3LA-GlitchClose-Viewer`) |
+| `glslangValidator` | `glslang` | `make -C 3LA-GlitchClose-Viewer check`, which compiles the extracted GLSL headlessly |
+| `update-desktop-database` | `desktop-file-utils` | `make -C 3LA-GlitchClose-Viewer install-desktop` |
+| a WebGL2 browser | `google-chrome` / `chromium` / `firefox` | opening the tuner; the shader is GLSL ES 3.00 so WebGL1 will not run it |
+| `cmake`, `meson`, `ninja`, `git` | same names | only for the `hyprpm` route, which builds its own header copy |
+
+## Building and installing
+
+Two routes. **hyprpm** is less to remember and handles rebuilds; **manual** is
+better if you are editing the plugins, since it skips the header rebuild.
+
+### Option A — hyprpm
+
+`hyprpm` reads [`hyprpm.toml`](hyprpm.toml) from the repo root, which declares
+both plugins and their `make` lines.
+
+```sh
+hyprpm update                                     # build headers for your Hyprland
 hyprpm add https://github.com/ne0tt/Hypr-3LA
 hyprpm enable 3LA-Corners
 hyprpm enable 3LA-GlitchClose
+hyprpm list                                       # confirm both show enabled: true
 ```
 
-Or build and load manually:
+`hyprpm update` clones and configures Hyprland to produce its own header set,
+so it needs the toolchain Hyprland builds with (`cmake`, `meson`, `ninja`,
+`git`) and takes a few minutes the first time.
+
+Then load them at every startup — in `hyprland.conf`:
+
+```ini
+exec-once = hyprpm reload -n
+```
+
+or in `hyprland.lua`, from inside your `hyprland.start` handler:
+
+```lua
+hl.exec_cmd("hyprpm reload -n")
+```
+
+The `commit_pins` entry in `hyprpm.toml` pairs a Hyprland commit with a
+plugin-repo commit. The pin currently matches the `hyprland` package's
+`GIT_COMMIT_HASH` (`efb5099…`). If you fork this repo, bump the *second* hash
+after committing or `hyprpm update` will keep fetching the older revision.
+
+### Option B — build from source
 
 ```sh
-make -C 3LA-Corners && make -C 3LA-GlitchClose   # or `make debug` for -g symbols
+git clone https://github.com/ne0tt/Hypr-3LA
+cd Hypr-3LA
+
+make -C 3LA-Corners
+make -C 3LA-GlitchClose
+```
+
+Each plugin directory is self-contained and has no build order between them.
+Useful targets, identical in both:
+
+| target | effect |
+|---|---|
+| `make` / `make all` | optimised, stripped `.so` |
+| `make debug` | adds `-g`; forces a clean rebuild first |
+| `make clean` | removes the `.so` |
+
+`-g` is left out of release builds on purpose: on 3LA-Corners it inflated the
+`.so` roughly 33× (3.3 MB against ~100 KB) with no codegen benefit. The dynamic
+exports Hyprland needs survive stripping either way, so `make debug` is only
+worth it when you actually need a readable backtrace.
+
+Expected output — roughly 110 KB and 440 KB:
+
+```sh
+ls -la 3LA-Corners/3LA-Corners.so 3LA-GlitchClose/3LA-GlitchClose.so
+```
+
+Load them into the running compositor:
+
+```sh
 hyprctl plugin load "$PWD/3LA-Corners/3LA-Corners.so"
 hyprctl plugin load "$PWD/3LA-GlitchClose/3LA-GlitchClose.so"
 ```
 
-Autoload from `hyprland.lua`:
+`hyprctl plugin load` needs an **absolute** path. To load at startup, from
+`hyprland.lua`:
 
 ```lua
 hl.plugin.load(os.getenv("HOME") .. "/git/Hypr-3LA/3LA-Corners/3LA-Corners.so")
 hl.plugin.load(os.getenv("HOME") .. "/git/Hypr-3LA/3LA-GlitchClose/3LA-GlitchClose.so")
 ```
+
+Each plugin also ships an `autoload.sh` as a startup fallback: it loads the
+`.so` via `hyprctl` only if it is not already present, then re-applies settings,
+so it is safe to run repeatedly and covers the case where the `hl.plugin.load`
+above doesn't take. See [Reference setup](#reference-setup-lua-config) for the
+complete working wiring, including where to hook it.
 
 Then apply settings and reload without restarting Hyprland:
 
@@ -66,23 +192,72 @@ Then apply settings and reload without restarting Hyprland:
 hyprctl eval 'dofile(os.getenv("HOME") .. "/.config/hypr/config/plugins.lua")'
 ```
 
-### Requirements
+### Verifying the install
 
-- the `hyprland` package's headers (`/usr/include/hyprland`) and `pkg-config`
-- a C++26 compiler (`g++`); the plugins link nothing — every symbol, including
-  the GL entry points, resolves against the running compositor at `dlopen`
-- a GL renderer for 3LA-GlitchClose; it disables itself on a Vulkan backend
-- `python3` for the shader tuner, which regenerates its bundle from the plugin
-  source
+```sh
+hyprpm list                                        # hyprpm route
+hyprctl plugin list                                # either route — both should appear
+hyprctl getoption plugin:3la_glitch_close:duration # a registered option proves init ran
+```
 
-**Plugins must be rebuilt whenever Hyprland updates.** The API commit hash is
-checked at load time and a mismatch refuses to load with a notification rather
-than crashing. Release builds are stripped — `make debug` keeps `-g` symbols for
-backtraces, and the dynamic exports Hyprland needs survive stripping either way.
+A plugin that loaded but whose config values are missing (`no such option`)
+almost always means an option was created but never passed to
+`HyprlandAPI::addConfigValueV2`.
 
-If you are installing via `hyprpm`, the `commit_pins` entry in `hyprpm.toml`
-pairs a Hyprland commit with a plugin-repo commit; bump the second hash after
-committing, or `hyprpm update` will keep fetching the older revision.
+### Rebuilding after a Hyprland update
+
+**Both plugins must be rebuilt every time Hyprland updates.** The API commit
+hash is baked in at compile time from the headers and compared against the
+running compositor's at load:
+
+```cpp
+if (std::string{__hyprland_api_get_hash()} != std::string{__hyprland_api_get_client_hash()})
+    throw std::runtime_error("version mismatch");
+```
+
+A mismatch refuses to load with a notification instead of crashing the
+compositor, so a stale build is an annoyance rather than a broken session.
+
+```sh
+# hyprpm route
+hyprpm update && hyprpm reload
+
+# manual route
+make -C 3LA-Corners clean && make -C 3LA-Corners
+make -C 3LA-GlitchClose clean && make -C 3LA-GlitchClose
+hyprctl plugin unload "$PWD/3LA-GlitchClose/3LA-GlitchClose.so"
+hyprctl plugin load   "$PWD/3LA-GlitchClose/3LA-GlitchClose.so"
+```
+
+Unload before load when reloading a rebuilt `.so` — loading over an already
+loaded plugin of the same name is refused.
+
+### The shader tuner (optional)
+
+`3LA-GlitchClose-Viewer` is a WebGL2 tuner that extracts the GLSL, the option
+list, the defaults and the ranges straight from the plugin sources, so it can
+never drift from what the compositor actually draws.
+
+```sh
+make -C 3LA-GlitchClose-Viewer            # regenerate generated.js
+make -C 3LA-GlitchClose-Viewer check      # compile the GLSL headlessly (needs glslang)
+make -C 3LA-GlitchClose-Viewer open       # launch it in a browser
+make -C 3LA-GlitchClose-Viewer install-desktop   # add to the app launcher
+```
+
+Re-run it after touching `shader.hpp` or `main.cpp`.
+
+### Troubleshooting
+
+| symptom | cause | fix |
+|---|---|---|
+| `hyprland.pc not found` | headers missing or off `PKG_CONFIG_PATH` | install the Hyprland headers package; check `pkg-config --modversion hyprland` |
+| Notification: *version mismatch (rebuild against running Hyprland)* | plugin built against different headers than the running compositor | rebuild — see above |
+| Notification: *requires the GL renderer* | Hyprland is on the Vulkan backend | 3LA-GlitchClose cannot run there; 3LA-Corners still works |
+| `hyprctl plugin load` returns an error | relative path, or already loaded | use an absolute path; `hyprctl plugin unload` first |
+| `keyword can't work with non-legacy parsers` | `hyprctl keyword` against the Lua config | use `hyprctl eval 'hl.config{...}'` instead |
+| `unknown config key 'plugin.…'` | plugin not loaded, or option never registered | check `hyprctl plugin list`; wrap startup config in `pcall` |
+| Builds fine, no visible effect | plugin loaded but settings never applied | re-run your `plugins.lua` via `hyprctl eval 'dofile(…)'` |
 
 ## Configuration
 
