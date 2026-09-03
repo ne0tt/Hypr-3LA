@@ -504,13 +504,12 @@ void CGlitchCloseManager::reset() {
 // in logical/screen orientation) to snapshot uv, by pushing three corners
 // through the monitor matrix.
 //
-// ORDER MATTERS: the bottom-up flip belongs on the LOGICAL y axis, before the
-// matrix -- that is the axis the shader's own uv convention is defined against.
-// Flipping the panel's y afterwards instead is the same thing on a landscape
-// monitor, but on a 90/270 one the matrix has swapped the axes in between, so
-// the two flips are about different axes and the sampled window comes out
-// rotated 180 degrees. On an untransformed monitor the matrix is identity and
-// this collapses back to the plain offset/scale it replaces.
+// NO y flip: the snapshot framebuffer is stored TOP-DOWN, so its row r is
+// monitor-local row r directly. An earlier version flipped y here on the
+// assumption that GL framebuffers are bottom-up, which biased every sample by
+// `transformedSize.y - 2*box.y - box.h` -- zero only for a window centred
+// vertically on the monitor, and a visible downward jump for any other. A
+// monitor reserving different amounts top and bottom is enough to trigger it.
 //
 // Every input here is fixed for the effect's life -- the box never moves -- so
 // the result is cached on the effect and rebuilt only if the monitor is
@@ -535,13 +534,12 @@ void CGlitchCloseManager::buildUV(SEffect& e, const PHLMONITOR& mon, const SP<Re
         return; // window-sized snapshot: local uv is already snapshot uv
 
     const double SW = SNAPSIZE.x, SH = SNAPSIZE.y;
-    const double TY = mon->m_transformedSize.y; // logical px, pre-matrix
     const CBox   PX = CBox{e.localBox}.scale(mon->m_scale);
     const auto   M  = mon->getTransformMatrix().getMatrix(); // logical px -> panel px
 
     auto         toTex = [&](double u, double v) {
         const double   LX = PX.x + u * PX.w;
-        const double   LY = TY - (PX.y + (1.0 - v) * PX.h); // v is up, boxes are y-down
+        const double   LY = PX.y + v * PX.h;
         const Vector2D P{M[0] * LX + M[1] * LY + M[2], M[3] * LX + M[4] * LY + M[5]};
         return Vector2D{P.x / SW, P.y / SH};
     };

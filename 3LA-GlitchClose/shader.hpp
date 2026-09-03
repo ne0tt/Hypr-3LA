@@ -21,17 +21,18 @@ void main() {
 // macroblock corruption, vertical melt, a rolling bright bar, per-channel
 // chromatic aberration, digital static, scanlines, backdrop collapse, vignette.
 //
-// UV convention: v_texcoord.y == 0 is the BOTTOM of the window, x runs left to
-// right across it, both in the monitor's LOGICAL orientation -- so every tear,
-// slice and melt below is authored in screen space and stays that way whatever
-// transform the monitor is on.
+// UV convention: v_texcoord.y == 0 is the TOP of the window and y runs DOWN,
+// x runs left to right across it, both in the monitor's LOGICAL orientation --
+// so every tear, slice and melt below is authored in screen space and stays
+// that way whatever transform the monitor is on.
 //
 // uvOffset/uvXf map that local uv onto the snapshot texture: makeSnapshotFB
 // hands back a monitor-sized framebuffer rendered through the monitor's own
 // projection, so on a rotated (portrait) monitor the window's pixels sit
-// ROTATED inside it. uvXf is the full 2x2 of that mapping -- rotation, flips
-// and the bottom-up framebuffer storage included -- not just a scale, so the
-// glitch keeps tearing across the window instead of down it.
+// ROTATED inside it. uvXf is the full 2x2 of that mapping -- rotation and flips
+// included -- not just a scale, so the glitch keeps tearing across the window
+// instead of down it. The framebuffer itself is stored top-down, matching the
+// uv convention above, so no y flip is involved.
 inline const std::string GLITCH_FRAG = R"#(#version 300 es
 
 precision highp float;
