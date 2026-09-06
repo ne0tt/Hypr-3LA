@@ -329,6 +329,14 @@ void CTitleBarDecoration::draw(PHLMONITOR pMonitor, float const& a) {
     box.w = std::max(0.0, box.w - 2 * GAP);
     box.h = std::max(0.0, box.h - 2 * GAP);
 
+    // 3LA-Corners' top brackets frame the outside of the reserved slot, not
+    // the bar itself -- nudge the bar up so its top edge lines up with them,
+    // matching the margin the brackets already sit at on the left/right sides
+    box.y -= 1.0;
+
+    // shrink the gap between the bar's bottom edge and the window below it
+    box.h += 5.0;
+
     CBox scaledBox = box.translate(offset).scale(pMonitor->m_scale).round();
 
     drawShadow(scaledBox, col.a);
