@@ -1,10 +1,10 @@
-PLUGIN_NAME = 3LA-Corners
-SOURCES     = main.cpp CornersDecoration.cpp
-HEADERS     = CornersDecoration.hpp globals.hpp
+PLUGIN_NAME = 3LA-TitleBars
+SOURCES     = main.cpp TitleBarDecoration.cpp
+HEADERS     = TitleBarDecoration.hpp globals.hpp
 CXX        ?= g++
 
-# -g is omitted on purpose: it made the .so ~33x larger (3.3 MB vs ~100 KB) with
-# no codegen benefit. Use `make debug` when you actually need symbols.
+# -g is omitted on purpose: it made the .so much larger with no codegen
+# benefit. Use `make debug` when you actually need symbols.
 CXXFLAGS += -shared -fPIC -fno-gnu-unique -std=c++26 -O2 \
             `pkg-config --cflags pixman-1 libdrm hyprland`
 

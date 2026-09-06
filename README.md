@@ -1,12 +1,13 @@
 # Hypr-3LA
 
-Two Hyprland plugins that give a tiling desktop a CCTV / surveillance-rig
+Hyprland plugins that give a tiling desktop a CCTV / surveillance-rig
 aesthetic: **[3LA-Corners](#3la-corners)** frames every window with
-targeting-reticle corner brackets, and **[3LA-GlitchClose](#3la-glitchclose)**
+targeting-reticle corner brackets, **[3LA-GlitchClose](#3la-glitchclose)**
 kills windows with a GLSL "signal lost" collapse instead of letting them blink
-out.
+out, and **[3LA-TitleBars](#3la-titlebars)** reserves a solid-color bar above the
+top of every window, with the window's title drawn on it.
 
-Both are C++ Hyprland plugins built against **Hyprland 0.56.2**, configured
+All are C++ Hyprland plugins built against **Hyprland 0.56.2**, configured
 either through classic `hyprland.conf` keywords or Hyprland's Lua config
 (`hl.config`), and installable with `hyprpm`.
 
@@ -14,6 +15,7 @@ either through classic `hyprland.conf` keywords or Hyprland's Lua config
 3LA-Corners/              corner brackets decoration
 3LA-GlitchClose/          GLSL shader signal-loss collapse
 3LA-GlitchClose-Viewer/   WebGL tuner for the shader above
+3LA-TitleBars/            solid-color title bar overlay
 hyprpm.toml               plugin manifest + Hyprland/plugin commit pins
 ```
 
@@ -34,6 +36,15 @@ Every frame of the collapse is one fragment-shader pass: v-sync seam, slice
 tearing, macroblock corruption, whole-frame ghost copies, chromatic aberration
 and static, with the caption composited on top so it stays legible. The window's
 own border stays clean throughout — the effect is inset strictly inside it.
+
+A live desktop with 3LA-TitleBars on every window, switching between the
+tiled layout and a fullscreen workspace. The kitty terminal keeps its own
+title, while the `btop` and file-manager windows are relabeled by
+`title_rules` to SYSTEM MONITOR and FILE SYSTEM EXPLORER:
+
+![demo: 3LA-TitleBars on a live desktop, switching workspaces](assets/titlebars-demo.gif)
+
+([full-quality mp4](assets/titlebars-demo.mp4))
 
 ## Requirements
 
@@ -510,6 +521,13 @@ hl.config({ plugin = { ["3la_corners"] = {
 
 - The bracket ring is *reserved* space: tiled windows shrink by
   `offset + thickness` per side so brackets never overlap neighbors.
+- The top pair of brackets automatically frames the outside of any other
+  plugin's reserved top-edge space (e.g. 3LA-TitleBars' bar), rather than
+  sitting flush against the window's own — now lower — top edge. This reads
+  the decoration positioner's total top-reserved extent and subtracts this
+  plugin's own margin, so it stays put with 0 extra offset when nothing else
+  reserves top space. The core Hyprland window border is unaffected either
+  way — only the brackets move.
 - Brackets are hidden on fullscreen windows. A burst armed on such a window still
   expires on its own schedule, since expiry is time-based rather than frame-driven.
 - Active state is read per-frame from `Desktop::focusState()->isWindowActive()`,
@@ -751,3 +769,144 @@ uniform is a build error rather than a dead slider. See
 - `ignore_class` / `ignore_title` are C++ `std::regex`, **not** Lua patterns.
 - Skip reasons are logged at `TRACE` (enable with `debug:enable_trace`) — useful
   when a close silently produces no effect.
+
+---
+
+# 3LA-TitleBars
+
+Draws a solid-color bar of `height` pixels above every window's top edge, with
+the window's own title rendered on it. The space is *reserved*, like a real
+titlebar: the window's own content is pushed down by `height + 2 * gap` and
+the bar sits above it rather than painting over the app's own top pixels.
+
+## Config
+
+Defaults shown:
+
+```lua
+hl.config({ plugin = { ["3la_titlebars"] = {
+    height = 24,             -- bar height (px)
+    gap = 7,                 -- gap (px) around the bar: above, below and on both sides
+
+    ["col.active"] = "rgba(690005ff)",  -- focused-window bar color
+    ["col.inactive"] = 0,               -- unfocused-window bar color.
+                                        -- 0 = follow col.active
+
+    ["opacity.active"] = 1.0,   -- opacity (0..1) of the bar, its text and its
+    ["opacity.inactive"] = 1.0, -- shadow -- mirrors decoration:active_opacity/
+                                -- inactive_opacity, since the bar otherwise
+                                -- ignores the renderer's own opacity multiplier
+
+    shadow = 1,                    -- soft shadow behind the bar (0 = off).
+                                   -- also off whenever decoration:shadow:enabled
+                                   -- is false -- see "Notes" below
+    ["shadow.size"] = 20,          -- spread distance (px)
+    ["shadow.strength"] = 0.5,     -- overall intensity (0..1)
+    ["shadow.col"] = "rgba(000000aa)", -- translucent black
+
+    ["text.size"] = 12,                     -- title font size (px)
+    ["text.font"] = "",                     -- title font family (empty = follow misc:font_family)
+    ["text.col.active"] = "rgba(ffffffff)", -- title text color, focused window
+    ["text.col.inactive"] = 0,              -- title text color, unfocused window.
+                                            -- 0 = follow text.col.active
+
+    ignore_class = "",  -- regex of window classes to never give a title bar (empty = none)
+    ignore_title = "",  -- regex of window titles to never give a title bar (empty = none)
+
+    title_rules = "",   -- custom titles; see "Custom titles" below (empty = none)
+} } })
+```
+
+## Custom titles
+
+`title_rules` overrides the text shown on the bar without touching the
+window's real title (used elsewhere for matching, alt-tab, etc.). It packs a
+list of rules into one string, since a plugin-defined repeatable keyword (the
+`windowrulev2`-style approach) has no path in from `hl.config`'s Lua bridge —
+only typed config *values* do:
+
+```lua
+-- 'class_regex,title_regex,override text' rules, separated by ';'.
+-- Either regex may be empty to match any class/title. First match wins.
+title_rules = "^(firefox)$,,WEB BROWSER;^(kitty)$,^(btop)$,SYSTEM MONITOR",
+```
+
+A window whose class matches `^(firefox)$` (any title) shows "WEB BROWSER"; a
+`kitty` window whose title matches `^(btop)$` shows "SYSTEM MONITOR"; every
+other window keeps showing its own (still-uppercased) title. Only the first
+two commas in a rule are treated as field separators, so the override text
+itself may contain commas. All 3 fields are required — a common mistake is
+writing a 2-field shorthand like `^(btop)$,SYSTEM MONITOR` meaning "match this
+title", which is instead read as a *class* regex with no override text field
+and gets skipped; leave the class field empty instead: `,^(btop)$,SYSTEM
+MONITOR`. An unparseable rule (missing a field, or an invalid regex) is
+skipped individually rather than breaking the whole list, and raises an
+in-session notification naming the bad rule and why, rather than just quietly
+never matching. Re-parsed only when the string actually changes, same as
+`ignore_class` / `ignore_title`.
+
+## Toggling a bar per-window
+
+`3la_titlebars:toggle` flips the bar on the currently **focused** window only
+(independent of `ignore_class`/`ignore_title`, and reversible — press again to
+bring it back). Exposed two ways:
+
+```lua
+-- classic dispatch string (hyprland.conf-style bind, or hl.dsp.exec_cmd("hyprctl dispatch 3la_titlebars:toggle"))
+bind = SUPER SHIFT, B, 3la_titlebars:toggle
+
+-- Lua keybind (hl.plugin.titlebars only exists while the plugin is loaded, hence the pcall)
+hl.bind("SUPER + SHIFT + B", function()
+    pcall(function() hl.plugin.titlebars.toggle() end)
+end, { description = "Toggle title bar on active window" })
+```
+
+`hyprctl dispatch 3la_titlebars:toggle` does **not** work as-is on a Lua-parsed
+config (`hyprctl dispatch` there routes through `hl.dispatch(...)`, which
+evaluates its argument as a Lua expression, not a dispatcher string) — use the
+Lua function form above, or `hyprctl eval 'hl.plugin.titlebars.toggle()'` for
+one-off testing.
+
+## Notes
+
+- The bar is *reserved* space: tiled windows shrink by `height + 2 * gap` to
+  make room above them, the same way 3LA-Corners reserves space for its
+  brackets. The bar itself is inset by `gap` on every side within that
+  reserved slot, so it floats with a margin instead of touching the window's
+  own top edge or the reserved area's outer boundary.
+- The title text is rendered to a texture and cached per window; it is only
+  re-rendered when the title string, resolved color, font family, font size or
+  available width actually change, and repainted immediately on a
+  `window.title` event (e.g. a browser tab switch) rather than waiting for
+  some unrelated redraw. The text is clipped/ellipsised to fit the bar's
+  width minus an 8px padding on each side.
+- The title is uppercased before rendering (ASCII letters only — accents and
+  any icon glyphs in a window title pass through untouched rather than being
+  mangled by a byte-wise transform of UTF-8).
+- The window's own drop shadow hugs the core border, not the bar: Hyprland
+  grows the shadow's box to include any decoration flagged
+  `DECORATION_PART_OF_MAIN_WINDOW` (the core border carries it; that's how the
+  shadow normally follows it seamlessly), and 3LA-TitleBars deliberately
+  leaves that flag off so that shadow stays where it always was.
+- The bar's own `shadow` is a *separate*, independent effect, not a second
+  copy of the window's shadow — a plugin can't reach Hyprland's real shadow
+  shader, so it's the same cheap layered-rect technique 3LA-Corners' `glow`
+  already uses: `shadow.size` stacked, expanded, fading-alpha copies of the
+  bar's box drawn behind it (6 layers, a stepped halo rather than a smooth
+  blur). Sized and colored entirely on its own terms via `shadow.*` — except
+  for on/off: turning off `decoration:shadow:enabled` also turns off the
+  bar's shadow, so one global shadow toggle covers both. The plugin's own
+  `shadow = 0` still lets you disable just the bar's shadow independently.
+- Fullscreen windows never get a bar — the decoration bails out early for them,
+  same as 3LA-Corners.
+- `ignore_class` / `ignore_title` opt specific windows out entirely (no bar,
+  no reserved space, window keeps its plain geometry) — same regex-filter
+  convention as 3LA-GlitchClose's options of the same name. Re-evaluated live
+  on `window.title` / `window.class_` events and on config reload, so a window
+  that changes class or title crossing the pattern gets its bar added or
+  removed on the spot, not just on next open.
+- Like 3LA-Corners, the bar (and its text) ignores the renderer's own opacity
+  multiplier (window opacity rules, `decoration:active_opacity`/
+  `inactive_opacity`): only the configured colors' own alpha, scaled by this
+  plugin's own `opacity.active`/`opacity.inactive`, controls them. The shadow
+  and text both fade along with the bar's own alpha.

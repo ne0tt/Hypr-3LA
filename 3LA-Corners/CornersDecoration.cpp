@@ -11,6 +11,7 @@
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/render/Renderer.hpp>
+#include <hyprland/src/render/decorations/DecorationPositioner.hpp>
 #include <hyprland/src/render/pass/RectPassElement.hpp>
 
 CCornersDecoration::CCornersDecoration(PHLWINDOW pWindow, bool flash) : IHyprWindowDecoration(pWindow), m_window(pWindow) {
@@ -130,7 +131,22 @@ static CHyprColor glowColor(const CHyprColor& bracketColor) {
     return bracketColor;
 }
 
-std::array<CBox, 8> CCornersDecoration::cornerBoxes(const Vector2D& pos, const Vector2D& size, double outerDist) const {
+// how much other reserved decorations (e.g. 3LA-TitleBars) push the window's
+// top edge down beyond our own reserved offset+thickness margin -- lets the
+// top brackets frame the outside of a titlebar-like bar instead of sitting
+// against the window's now-lower top edge. Fully generic: 0 whenever nothing
+// else reserves top space, so behavior is unchanged without such a plugin.
+double CCornersDecoration::extraTopReserved() const {
+    const auto PWINDOW = m_window.lock();
+    if (!PWINDOW)
+        return 0.0;
+
+    const double TOTAL = g_pDecorationPositioner->getWindowDecorationReserved(m_window).topLeft.y;
+    const double OWN   = g_offset->value() + g_thickness->value();
+    return std::max<double>(0.0, TOTAL - OWN);
+}
+
+std::array<CBox, 8> CCornersDecoration::cornerBoxes(const Vector2D& pos, const Vector2D& size, double outerDist, double topExtra) const {
     const double D = outerDist;
     const double T = std::max<double>(g_thickness->value(), 1);
     // clamp arm length so opposing brackets meet at most in the middle
@@ -138,7 +154,7 @@ std::array<CBox, 8> CCornersDecoration::cornerBoxes(const Vector2D& pos, const V
     const double LY = std::clamp<double>(g_length->value(), T, (size.y + 2 * D) / 2.0);
 
     const double L = pos.x - D, R = pos.x + size.x + D; // outer corners
-    const double U = pos.y - D, B = pos.y + size.y + D;
+    const double U = pos.y - D - topExtra, B = pos.y + size.y + D;
 
     // per corner: horizontal arm (full length), vertical arm inset by T to avoid
     // double-blending the corner square with translucent colors
@@ -210,7 +226,8 @@ void CCornersDecoration::draw(PHLMONITOR pMonitor, float const& a) {
 
     const CHyprColor glow = glowColor(col);
 
-    const double D = PWINDOW->getRealBorderSize() + g_offset->value() + g_thickness->value();
+    const double D         = PWINDOW->getRealBorderSize() + g_offset->value() + g_thickness->value();
+    const double TOPEXTRA  = extraTopReserved();
 
     Vector2D     offset = PWINDOW->m_floatingOffset - pMonitor->m_position;
     if (PWINDOW->m_workspace)
@@ -221,7 +238,7 @@ void CCornersDecoration::draw(PHLMONITOR pMonitor, float const& a) {
     const bool GLOW = g_glow->value() != 0 && m_flashing;
 
     for (auto box : cornerBoxes(PWINDOW->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT), //
-                                PWINDOW->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT), D)) {
+                                PWINDOW->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT), D, TOPEXTRA)) {
         CBox scaledBox = box.translate(offset).scale(pMonitor->m_scale).round();
 
         if (GLOW)
@@ -253,6 +270,13 @@ void CCornersDecoration::damageEntire() {
     const double D          = PWINDOW->getRealBorderSize() + g_offset->value() + g_thickness->value() + GLOWEXPAND;
     CBox         box        = PWINDOW->geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
     box.translate(PWINDOW->m_floatingOffset).expand(D);
+
+    // grow further upward only, to cover brackets pushed out past other
+    // reserved top decorations (e.g. 3LA-TitleBars)
+    const double TOPEXTRA = extraTopReserved();
+    box.y -= TOPEXTRA;
+    box.h += TOPEXTRA;
+
     g_pHyprRenderer->damageBox(box);
 }
 
