@@ -285,7 +285,12 @@ eDecorationLayer CCornersDecoration::getDecorationLayer() {
 }
 
 uint64_t CCornersDecoration::getDecorationFlags() {
-    return DECORATION_PART_OF_MAIN_WINDOW | DECORATION_NON_SOLID;
+    // deliberately NOT DECORATION_PART_OF_MAIN_WINDOW: that flag pulls this
+    // decoration's box into Hyprland's native shadow geometry, pushing the
+    // shadow out to hug the brackets instead of the window/border and forcing
+    // a negative shadow:range/offset (with a too-sharp falloff) to compensate.
+    // Same reasoning 3LA-TitleBars already applies to its own bar.
+    return DECORATION_NON_SOLID;
 }
 
 std::string CCornersDecoration::getDisplayName() {

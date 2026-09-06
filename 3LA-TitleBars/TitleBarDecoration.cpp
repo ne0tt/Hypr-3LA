@@ -241,11 +241,18 @@ static bool hyprShadowsEnabled() {
 }
 
 // cheap layered-rect shadow: a handful of expanded, fading-alpha copies of the
-// box drawn behind it, same technique as 3LA-Corners' glow -- there's no
-// shader access from a plugin, so this stands in for a true soft blur. Kept
-// deliberately independent of Hyprland's own window shadow (decoration:shadow:*,
-// which 3LA-Corners' brackets and this bar's own DECORATION_PART_OF_MAIN_WINDOW-less
-// flags stay out of) so it can be sized/colored on its own terms.
+// box drawn behind it -- there's no shader access from a plugin, so this
+// stands in for a true soft blur. Kept deliberately independent of Hyprland's
+// own window shadow (decoration:shadow:*, which 3LA-Corners' brackets and this
+// bar's own DECORATION_PART_OF_MAIN_WINDOW-less flags stay out of) so it can
+// be sized/colored on its own terms.
+//
+// Each layer's alpha is NOT divided by LAYERS again on top of the (1-T)
+// taper: the layers are drawn largest-first so they compose (over-blend)
+// near the bar's edge, and skipping the extra division means
+// shadow_strength=1.0 actually composites to near-opaque right at the bar,
+// fading out smoothly over shadow_size -- rather than topping out around
+// ~35% alpha regardless of the configured strength.
 void CTitleBarDecoration::drawShadow(const CBox& scaledBox, float barAlpha) const {
     static constexpr int LAYERS = 6;
 
@@ -262,7 +269,7 @@ void CTitleBarDecoration::drawShadow(const CBox& scaledBox, float barAlpha) cons
     for (int i = LAYERS; i >= 1; --i) {
         const float T          = static_cast<float>(i) / LAYERS; // 1.0 (outermost) .. 1/LAYERS (innermost)
         const float EXPAND     = SIZE * T;
-        const float LAYERALPHA = col.a * STRENGTH * barAlpha * (1.F - T) / LAYERS;
+        const float LAYERALPHA = col.a * STRENGTH * barAlpha * (1.F - T);
         if (LAYERALPHA <= 0.F)
             continue;
 
