@@ -45,6 +45,15 @@ class CTitleBarDecoration : public IHyprWindowDecoration {
     PHLWINDOWREF          m_window;
     bool                  m_toggledOff = false;
 
+    // last box damageEntire() actually computed while the window was still
+    // valid, replayed as-is if damageEntire() runs after the window is
+    // already gone (window.destroy fires once geometry/positioner state for
+    // it no longer exists, too late to recompute) -- otherwise the bar's
+    // last frame is never cleared and lingers until an unrelated full repaint
+    CBox                  m_lastDamageBox;
+    bool                  m_hasDamageBox = false;
+    PHLMONITORREF         m_lastMonitor;
+
     SP<Render::ITexture>  m_textTex;
     std::string           m_textCacheTitle;
     int64_t               m_textCacheColor  = 0;

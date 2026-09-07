@@ -298,6 +298,8 @@ void CTitleBarDecoration::draw(PHLMONITOR pMonitor, float const& a) {
     if (!PWINDOW || !Desktop::View::validMapped(PWINDOW) || PWINDOW->isHidden())
         return;
 
+    m_lastMonitor = pMonitor;
+
     if (Fullscreen::controller()->isFullscreen(PWINDOW))
         return;
 
@@ -386,8 +388,18 @@ void CTitleBarDecoration::updateWindow(PHLWINDOW pWindow) {
 
 void CTitleBarDecoration::damageEntire() {
     const auto PWINDOW = m_window.lock();
-    if (!PWINDOW)
+    if (!PWINDOW) {
+        // window already torn down (destroy fires this late). A precise
+        // sub-box damageBox() here was observed to not actually get repainted
+        // on non-focused monitors (only forced full repaints -- a screenshot,
+        // an unrelated notification -- ever cleared it), so fall back to
+        // damaging the whole output the bar was last drawn on instead.
+        if (const auto PMONITOR = m_lastMonitor.lock())
+            g_pHyprRenderer->damageMonitor(PMONITOR);
+        else if (m_hasDamageBox)
+            g_pHyprRenderer->damageBox(m_lastDamageBox);
         return;
+    }
 
     // shadow layers extend past the bar's own box, so damage must grow by
     // shadow.size too or its outer edge leaves trails when moving/resizing
@@ -396,6 +408,10 @@ void CTitleBarDecoration::damageEntire() {
     CBox box = g_pDecorationPositioner->getWindowDecorationBox(this);
     box.translate(PWINDOW->m_floatingOffset);
     box.expand(SHADOWEXPAND);
+
+    m_lastDamageBox = box;
+    m_hasDamageBox  = true;
+
     g_pHyprRenderer->damageBox(box);
 }
 

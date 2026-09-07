@@ -4,8 +4,8 @@ Hyprland plugins that give a tiling desktop a CCTV / surveillance-rig
 aesthetic: **[3LA-Corners](#3la-corners)** frames every window with
 targeting-reticle corner brackets, **[3LA-GlitchClose](#3la-glitchclose)**
 kills windows with a GLSL "signal lost" collapse instead of letting them blink
-out, and **[3LA-TitleBars](#3la-titlebars)** reserves a solid-color bar above the
-top of every window, with the window's title drawn on it.
+out, and **[3LA-TitleBars](#3la-titlebars)** reserves a solid-color bar above
+the top of every window, with the window's title drawn on it.
 
 All are C++ Hyprland plugins built against **Hyprland 0.56.2**, configured
 either through classic `hyprland.conf` keywords or Hyprland's Lua config
@@ -53,7 +53,7 @@ title, while the `btop` and file-manager windows are relabeled by
 | | |
 |---|---|
 | **Hyprland 0.56.2** | Matched on *commit hash*, not version string, so two 0.56.2 builds from different commits still mismatch — see [Rebuilding after a Hyprland update](#rebuilding-after-a-hyprland-update) |
-| **A GL renderer** | 3LA-GlitchClose needs raw GL calls; on a Vulkan backend it logs an error, raises a notification and disables itself rather than misbehaving. 3LA-Corners is unaffected. |
+| **A GL renderer** | 3LA-GlitchClose needs raw GL calls; on a Vulkan backend it logs an error, raises a notification and disables itself rather than misbehaving. 3LA-Corners and 3LA-TitleBars are unaffected. |
 
 Nothing else. The built `.so` links only the C++ runtime — every Hyprland and GL
 symbol (183 of them in 3LA-GlitchClose) is deliberately left undefined and
@@ -101,10 +101,10 @@ If `pkg-config --modversion hyprland` fails, the headers are missing or not on
 
 | what | Arch package | needed for |
 |---|---|---|
-| `python3` | `python` | regenerating the shader tuner's bundle (`3LA-GlitchClose-Viewer`) |
+| `python3` | `python` | regenerating a shader tuner's bundle (`3LA-GlitchClose-Viewer`) |
 | `glslangValidator` | `glslang` | `make -C 3LA-GlitchClose-Viewer check`, which compiles the extracted GLSL headlessly |
 | `update-desktop-database` | `desktop-file-utils` | `make -C 3LA-GlitchClose-Viewer install-desktop` |
-| a WebGL2 browser | `google-chrome` / `chromium` / `firefox` | opening the tuner; the shader is GLSL ES 3.00 so WebGL1 will not run it |
+| a WebGL2 browser | `google-chrome` / `chromium` / `firefox` | opening a tuner; the shaders are GLSL ES 3.00 so WebGL1 will not run them |
 | `cmake`, `meson`, `ninja`, `git` | same names | only for the `hyprpm` route, which builds its own header copy |
 
 ## Building and installing
@@ -115,14 +115,15 @@ better if you are editing the plugins, since it skips the header rebuild.
 ### Option A — hyprpm
 
 `hyprpm` reads [`hyprpm.toml`](hyprpm.toml) from the repo root, which declares
-both plugins and their `make` lines.
+all three plugins and their `make` lines.
 
 ```sh
 hyprpm update                                     # build headers for your Hyprland
 hyprpm add https://github.com/ne0tt/Hypr-3LA
 hyprpm enable 3LA-Corners
 hyprpm enable 3LA-GlitchClose
-hyprpm list                                       # confirm both show enabled: true
+hyprpm enable 3LA-TitleBars
+hyprpm list                                       # confirm they show enabled: true
 ```
 
 `hyprpm update` clones and configures Hyprland to produce its own header set,
@@ -154,10 +155,11 @@ cd Hypr-3LA
 
 make -C 3LA-Corners
 make -C 3LA-GlitchClose
+make -C 3LA-TitleBars
 ```
 
 Each plugin directory is self-contained and has no build order between them.
-Useful targets, identical in both:
+Useful targets, identical across all three:
 
 | target | effect |
 |---|---|
@@ -170,10 +172,8 @@ Useful targets, identical in both:
 exports Hyprland needs survive stripping either way, so `make debug` is only
 worth it when you actually need a readable backtrace.
 
-Expected output — roughly 110 KB and 440 KB:
-
 ```sh
-ls -la 3LA-Corners/3LA-Corners.so 3LA-GlitchClose/3LA-GlitchClose.so
+ls -la 3LA-Corners/3LA-Corners.so 3LA-GlitchClose/3LA-GlitchClose.so 3LA-TitleBars/3LA-TitleBars.so
 ```
 
 Load them into the running compositor:
@@ -181,6 +181,7 @@ Load them into the running compositor:
 ```sh
 hyprctl plugin load "$PWD/3LA-Corners/3LA-Corners.so"
 hyprctl plugin load "$PWD/3LA-GlitchClose/3LA-GlitchClose.so"
+hyprctl plugin load "$PWD/3LA-TitleBars/3LA-TitleBars.so"
 ```
 
 `hyprctl plugin load` needs an **absolute** path. To load at startup, from
@@ -538,6 +539,14 @@ hl.config({ plugin = { ["3la_corners"] = {
 - While a flash is running the decoration damages itself every frame to drive the
   animation, so `flash_on_focus = 1` costs a short burst of redraws per focus
   change. On a heavily loaded GPU prefer a low `focus_flash_count`.
+- Closing a window no longer leaves its brackets stuck on screen. `window.close`
+  damages them while the window's geometry is still valid — that covers a
+  compositor-initiated close (a dispatcher, `killactive`). A client that exits on
+  its own (typed `exit`, its own quit shortcut, a plain kill) never fires
+  `window.close`; only `window.destroy` reaches it, by which point the geometry
+  needed to compute a damage box is already gone, so the decoration instead
+  replays the whole output it was last drawn on — a precise cached sub-box was
+  observed to not actually repaint on a non-focused monitor.
 
 ---
 
@@ -631,6 +640,35 @@ event. That event fires at *unmap*, so the snapshot capture usually fails on
 this path and the shader falls back to its static-only mode (`hasTex = 0`).
 An application that simply **exits on its own** never emits `window.close` at
 all, so it gets no effect — this is inherent to the event.
+
+**Workaround for shell exits:** a terminal running `exit` closes its own
+window directly (the compositor never sees a keybind or a `window.close`
+event to hook), so the only way to get the effect there is to call the
+dispatcher yourself before the shell actually terminates. Shadow `exit` with
+a shell function that calls it through `hyprctl dispatch` and only falls back
+to a real exit if the plugin isn't loaded:
+
+```zsh
+function exit(){
+    if hyprctl dispatch 'assert(false, type(hl.plugin) .. "/" .. type((hl.plugin or {}).glitchclose))' 2>&1 \
+         | grep -q 'table/table'; then
+        hyprctl dispatch '(function() hl.plugin.glitchclose.close() return hl.dsp.no_op() end)()'
+    else
+        builtin exit "$@"
+    fi
+}
+```
+
+The probe call deliberately fails an `assert` so its message — `type(hl.plugin)
+.. "/" .. type(hl.plugin.glitchclose)` — comes back on stderr, since
+`hyprctl dispatch` has no other way to return a value; that's how the function
+detects whether the plugin is loaded before relying on it. The `return
+hl.dsp.no_op()` in the second call exists only because
+`hl.plugin.glitchclose.close()` itself returns nothing, which would otherwise
+make `hyprctl dispatch` treat the call as an error. `glitchclose.close()`
+closes the *currently focused* window, so this only does the right thing when
+the terminal running `exit` is focused — true for the ordinary interactive
+case this targets.
 
 ## Config
 
@@ -899,6 +937,11 @@ one-off testing.
   `shadow = 0` still lets you disable just the bar's shadow independently.
 - Fullscreen windows never get a bar — the decoration bails out early for them,
   same as 3LA-Corners.
+- Closing a window no longer leaves its bar stuck on screen — same fix as
+  3LA-Corners: `window.close` damages it while geometry is still valid, and a
+  client that exits on its own only ever reaches `window.destroy`, too late to
+  recompute a box, so the decoration instead damages the whole output it was
+  last drawn on.
 - `ignore_class` / `ignore_title` opt specific windows out entirely (no bar,
   no reserved space, window keeps its plain geometry) — same regex-filter
   convention as 3LA-GlitchClose's options of the same name. Re-evaluated live

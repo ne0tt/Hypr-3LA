@@ -15,10 +15,20 @@
 static std::unordered_map<Desktop::View::CWindow*, CTitleBarDecoration*> g_decos;
 
 static CHyprSignalListener                                               g_openListener;
+static CHyprSignalListener                                               g_closeListener;
 static CHyprSignalListener                                               g_destroyListener;
 static CHyprSignalListener                                               g_reloadListener;
 static CHyprSignalListener                                               g_titleListener;
 static CHyprSignalListener                                               g_classListener;
+
+static void damageDeco(const PHLWINDOW& w) {
+    if (!w)
+        return;
+
+    const auto IT = g_decos.find(w.get());
+    if (IT != g_decos.end())
+        IT->second->damageEntire();
+}
 
 static void addDeco(const PHLWINDOW& w) {
     if (!w || g_decos.contains(w.get()))
@@ -111,10 +121,27 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addDispatcherV2(PHANDLE, "3la_titlebars:toggle", [](std::string arg) { return dispatchToggleTitleBar(arg); });
     HyprlandAPI::addLuaFunction(PHANDLE, "titlebars", "toggle", luaToggleTitleBar); // auto-removed on unload
 
-    g_openListener    = Event::bus()->m_events.window.open.listen([](const PHLWINDOW& w) { addDeco(w); });
+    g_openListener  = Event::bus()->m_events.window.open.listen([](const PHLWINDOW& w) { addDeco(w); });
+    // window.destroy fires once the window is already torn down (it's handed
+    // a weak ref for a reason), too late to compute a damage box for a bar
+    // reserved outside the window's own geometry. window.close fires
+    // earlier, while position/geometry are still valid, so damage there --
+    // otherwise the bar's last frame lingers on screen until something else
+    // forces a full repaint (e.g. a workspace switch).
+    g_closeListener   = Event::bus()->m_events.window.close.listen([](const PHLWINDOW& w) { damageDeco(w); });
     g_destroyListener = Event::bus()->m_events.window.destroy.listen([](const PHLWINDOWREF& w) {
-        if (w)
-            g_decos.erase(w.get());
+        if (!w)
+            return;
+        // window.close only fires for a compositor-initiated close (e.g. a
+        // dispatcher) -- a client that exits on its own (typed `exit`, its
+        // own quit shortcut, a plain kill) only ever reaches this listener,
+        // by which point the window is already gone. damageEntire() falls
+        // back to its cached last-painted box in that case.
+        const auto IT = g_decos.find(w.get());
+        if (IT != g_decos.end()) {
+            IT->second->damageEntire();
+            g_decos.erase(IT);
+        }
     });
     g_reloadListener  = Event::bus()->m_events.config.reloaded.listen([] {
         // repositionDeco alone doesn't damage: a reload that only changes
@@ -151,6 +178,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
 APICALL EXPORT void PLUGIN_EXIT() {
     g_openListener.reset();
+    g_closeListener.reset();
     g_destroyListener.reset();
     g_reloadListener.reset();
     g_titleListener.reset();

@@ -204,6 +204,8 @@ void CCornersDecoration::draw(PHLMONITOR pMonitor, float const& a) {
     if (!PWINDOW || !Desktop::View::validMapped(PWINDOW) || PWINDOW->isHidden())
         return;
 
+    m_lastMonitor = pMonitor;
+
     if (Fullscreen::controller()->isFullscreen(PWINDOW))
         return;
 
@@ -261,8 +263,18 @@ void CCornersDecoration::updateWindow(PHLWINDOW pWindow) {
 
 void CCornersDecoration::damageEntire() {
     const auto PWINDOW = m_window.lock();
-    if (!PWINDOW)
+    if (!PWINDOW) {
+        // window already torn down (destroy fires this late). A precise
+        // sub-box damageBox() here was observed to not actually get repainted
+        // on non-focused monitors (only forced full repaints -- a screenshot,
+        // an unrelated notification -- ever cleared it), so fall back to
+        // damaging the whole output the brackets were last drawn on instead.
+        if (const auto PMONITOR = m_lastMonitor.lock())
+            g_pHyprRenderer->damageMonitor(PMONITOR);
+        else if (m_hasDamageBox)
+            g_pHyprRenderer->damageBox(m_lastDamageBox);
         return;
+    }
 
     // glow layers extend past the bracket boxes themselves, so the damage region
     // must grow by glow.size too or its outer edge leaves trails when moving/resizing.
@@ -276,6 +288,9 @@ void CCornersDecoration::damageEntire() {
     const double TOPEXTRA = extraTopReserved();
     box.y -= TOPEXTRA;
     box.h += TOPEXTRA;
+
+    m_lastDamageBox = box;
+    m_hasDamageBox  = true;
 
     g_pHyprRenderer->damageBox(box);
 }

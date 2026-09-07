@@ -2,6 +2,7 @@
 
 #include <array>
 #include <chrono>
+#include <string>
 
 #include <hyprland/src/render/decorations/IHyprWindowDecoration.hpp>
 #include <hyprland/src/desktop/DesktopTypes.hpp>
@@ -40,6 +41,16 @@ class CCornersDecoration : public IHyprWindowDecoration {
     float               flashMultiplier();
 
     PHLWINDOWREF                          m_window;
+
+    // last box damageEntire() actually computed while the window was still
+    // valid, replayed as-is if damageEntire() runs after the window is
+    // already gone (window.destroy fires once geometry for it no longer
+    // exists, too late to recompute) -- otherwise the brackets' last frame
+    // is never cleared and lingers until an unrelated full repaint
+    CBox                                  m_lastDamageBox;
+    bool                                  m_hasDamageBox = false;
+    PHLMONITORREF                         m_lastMonitor;
+
     bool                                  m_flashing  = false;
     eFlashKind                            m_flashKind = FLASH_NONE;
     std::chrono::steady_clock::time_point m_flashStart;
