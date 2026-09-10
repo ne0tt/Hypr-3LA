@@ -10,6 +10,7 @@ inline HANDLE                           PHANDLE = nullptr;
 
 inline SP<Config::Values::CIntValue>    g_height;
 inline SP<Config::Values::CIntValue>    g_gap;
+inline SP<Config::Values::CIntValue>    g_gapBottom;
 inline SP<Config::Values::CColorValue>  g_colorActive;
 inline SP<Config::Values::CColorValue>  g_colorInactive;
 inline SP<Config::Values::CFloatValue>  g_opacityActive;

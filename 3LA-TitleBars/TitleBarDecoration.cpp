@@ -208,8 +208,9 @@ bool CTitleBarDecoration::hidden() const {
 SDecorationPositioningInfo CTitleBarDecoration::getPositioningInfo() {
     // reserved space above the window's top edge, so the bar sits above the
     // application instead of painting over its own top pixels. The reserved
-    // slot includes the gap margin on top of and below the bar itself --
-    // draw() insets the painted rectangle back out of it by `gap`.
+    // slot includes the gap margin above and below the bar itself -- draw()
+    // insets the painted rectangle back out of it by `gap` (top/sides) and
+    // `gap.bottom` (bottom).
     SDecorationPositioningInfo info;
     info.policy = DECORATION_POSITION_STICKY;
     info.edges  = DECORATION_EDGE_TOP;
@@ -221,7 +222,7 @@ SDecorationPositioningInfo CTitleBarDecoration::getPositioningInfo() {
         return info;
     }
 
-    info.desiredExtents = {Vector2D{0.0, static_cast<double>(g_height->value() + 2 * g_gap->value())}, Vector2D{0.0, 0.0}};
+    info.desiredExtents = {Vector2D{0.0, static_cast<double>(g_height->value() + g_gap->value() + g_gapBottom->value())}, Vector2D{0.0, 0.0}};
     info.reserved       = true;
     return info;
 }
@@ -322,14 +323,17 @@ void CTitleBarDecoration::draw(PHLMONITOR pMonitor, float const& a) {
     if (PWINDOW->m_workspace)
         offset = offset + PWINDOW->m_workspace->m_renderOffset->value();
 
-    // the reserved slot is height + 2*gap tall and full window width; inset it
-    // by `gap` on every side so the bar floats with a margin around it
-    const double GAP = std::max<Config::INTEGER>(g_gap->value(), 0);
-    CBox         box = g_pDecorationPositioner->getWindowDecorationBox(this);
+    // the reserved slot is height + gap + gap.bottom tall and full window
+    // width; inset it by `gap` on the top/left/right and `gap.bottom` on the
+    // bottom so the bar floats with an independently configurable margin
+    // above/beside it versus below it
+    const double GAP       = std::max<Config::INTEGER>(g_gap->value(), 0);
+    const double GAPBOTTOM = std::max<Config::INTEGER>(g_gapBottom->value(), 0);
+    CBox         box       = g_pDecorationPositioner->getWindowDecorationBox(this);
     box.x += GAP;
     box.y += GAP;
     box.w = std::max(0.0, box.w - 2 * GAP);
-    box.h = std::max(0.0, box.h - 2 * GAP);
+    box.h = std::max(0.0, box.h - GAP - GAPBOTTOM);
 
     // 3LA-Corners' top brackets frame the outside of the reserved slot, not
     // the bar itself -- nudge the bar up so its top edge lines up with them,

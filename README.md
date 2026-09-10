@@ -190,6 +190,7 @@ hyprctl plugin load "$PWD/3LA-TitleBars/3LA-TitleBars.so"
 ```lua
 hl.plugin.load(os.getenv("HOME") .. "/git/Hypr-3LA/3LA-Corners/3LA-Corners.so")
 hl.plugin.load(os.getenv("HOME") .. "/git/Hypr-3LA/3LA-GlitchClose/3LA-GlitchClose.so")
+hl.plugin.load(os.getenv("HOME") .. "/git/Hypr-3LA/3LA-TitleBars/3LA-TitleBars.so")
 ```
 
 Each plugin also ships an `autoload.sh` as a startup fallback: it loads the
@@ -218,9 +219,9 @@ almost always means an option was created but never passed to
 
 ### Rebuilding after a Hyprland update
 
-**Both plugins must be rebuilt every time Hyprland updates.** The API commit
-hash is baked in at compile time from the headers and compared against the
-running compositor's at load:
+**All three plugins must be rebuilt every time Hyprland updates.** The API
+commit hash is baked in at compile time from the headers and compared against
+the running compositor's at load:
 
 ```cpp
 if (std::string{__hyprland_api_get_hash()} != std::string{__hyprland_api_get_client_hash()})
@@ -234,8 +235,12 @@ compositor, so a stale build is an annoyance rather than a broken session.
 # hyprpm route
 hyprpm update && hyprpm reload
 
-# manual route
-make -C 3LA-Corners clean && make -C 3LA-Corners
+# manual route -- rebuild-plugins.sh cleans and rebuilds all three (skipping
+# 3LA-GlitchClose-Viewer, which isn't a plugin), and --reload additionally
+# unloads/reloads any of them that are currently running in the compositor
+./rebuild-plugins.sh --reload
+
+# ...or one plugin at a time by hand
 make -C 3LA-GlitchClose clean && make -C 3LA-GlitchClose
 hyprctl plugin unload "$PWD/3LA-GlitchClose/3LA-GlitchClose.so"
 hyprctl plugin load   "$PWD/3LA-GlitchClose/3LA-GlitchClose.so"
@@ -281,6 +286,7 @@ not-yet-loaded plugin can't break the rest of the config:
 pcall(hl.config, { plugin = {
     ["3la_corners"]      = { offset = 10, length = 40, thickness = 1 },
     ["3la_glitch_close"] = { duration = 700, strength = 1.0, text = "SIGNAL LOST" },
+    ["3la_titlebars"]    = { height = 24, gap = 7, ["gap.bottom"] = 7 },
 } })
 ```
 
@@ -295,7 +301,7 @@ hyprctl eval 'hl.config({ plugin = { ["3la_glitch_close"] = { strength = 2.0 } }
 hyprctl getoption plugin:3la_glitch_close:duration   # inspect
 ```
 
-Both plugins read their colours from config on every frame, so feeding
+All three plugins read their colours from config on every frame, so feeding
 matugen-generated globals into the `col.*` options re-themes a live effect with
 no plugin reload.
 
@@ -310,10 +316,12 @@ registration doesn't take:
 ```lua
 hl.plugin.load(os.getenv("HOME") .. "/git/Hypr-3LA/3LA-Corners/3LA-Corners.so")
 hl.plugin.load(os.getenv("HOME") .. "/git/Hypr-3LA/3LA-GlitchClose/3LA-GlitchClose.so")
+hl.plugin.load(os.getenv("HOME") .. "/git/Hypr-3LA/3LA-TitleBars/3LA-TitleBars.so")
 
 hl.on("hyprland.start", function()
     hl.exec_cmd(os.getenv("HOME") .. "/git/Hypr-3LA/3LA-Corners/autoload.sh")
     hl.exec_cmd(os.getenv("HOME") .. "/git/Hypr-3LA/3LA-GlitchClose/autoload.sh")
+    hl.exec_cmd(os.getenv("HOME") .. "/git/Hypr-3LA/3LA-TitleBars/autoload.sh")
 end)
 
 require("config.colors")  -- matugen globals, before anything that uses them
@@ -356,6 +364,33 @@ pcall(hl.config, {
             text_padding = 14, text_bg_round = 0, text_bg_alpha = 0.55,
             ["col.text"] = 0,             -- 0 = white
             ["col.text_bg"] = on_error,
+        }
+    }
+})
+
+pcall(hl.config, {
+    plugin = {
+        ["3la_titlebars"] = {
+            height = 24,
+            gap = 8,             -- above the bar and on both sides
+            ["gap.bottom"] = 4,  -- below the bar, sized independently of `gap`
+
+            ["opacity.active"] = active_opacity,     -- mirrors decoration:active_opacity
+            ["opacity.inactive"] = inactive_opacity, -- mirrors decoration:inactive_opacity
+
+            ["col.active"] = on_error,       -- matugen color globals
+            ["col.inactive"] = on_secondary,
+
+            shadow = 1, ["shadow.size"] = 9, ["shadow.strength"] = 0.35,
+            ["shadow.col"] = (shadow:gsub("ff%)$", "ee)")),
+
+            ["text.size"] = 16, ["text.font"] = "Bebas Neue",
+            ["text.col.active"] = primary,
+            ["text.col.inactive"] = primary,
+
+            ignore_class = "^(code|chrome-www\\.youtube\\.com__-Default|BambuStudio)$",
+            ignore_title = "^(LEFT|RIGHT|MAIN-LEFT|MAIN-RIGHT|BOTTOM-RIGHT)$",
+            title_rules = "...", -- see "Custom titles" above for the syntax
         }
     }
 })
@@ -814,8 +849,9 @@ uniform is a build error rather than a dead slider. See
 
 Draws a solid-color bar of `height` pixels above every window's top edge, with
 the window's own title rendered on it. The space is *reserved*, like a real
-titlebar: the window's own content is pushed down by `height + 2 * gap` and
-the bar sits above it rather than painting over the app's own top pixels.
+titlebar: the window's own content is pushed down by `height + gap +
+gap.bottom` and the bar sits above it rather than painting over the app's own
+top pixels.
 
 ## Config
 
@@ -824,7 +860,8 @@ Defaults shown:
 ```lua
 hl.config({ plugin = { ["3la_titlebars"] = {
     height = 24,             -- bar height (px)
-    gap = 7,                 -- gap (px) around the bar: above, below and on both sides
+    gap = 7,                 -- gap (px) above the bar and on both sides
+    ["gap.bottom"] = 7,      -- gap (px) below the bar, between it and the window underneath
 
     ["col.active"] = "rgba(690005ff)",  -- focused-window bar color
     ["col.inactive"] = 0,               -- unfocused-window bar color.
@@ -907,11 +944,13 @@ one-off testing.
 
 ## Notes
 
-- The bar is *reserved* space: tiled windows shrink by `height + 2 * gap` to
-  make room above them, the same way 3LA-Corners reserves space for its
-  brackets. The bar itself is inset by `gap` on every side within that
-  reserved slot, so it floats with a margin instead of touching the window's
-  own top edge or the reserved area's outer boundary.
+- The bar is *reserved* space: tiled windows shrink by `height + gap +
+  gap.bottom` to make room above them, the same way 3LA-Corners reserves space
+  for its brackets. The bar itself is inset by `gap` on the top/left/right and
+  `gap.bottom` on the bottom within that reserved slot, so it floats with a
+  margin instead of touching the window's own top edge or the reserved area's
+  outer boundary -- the top/side margin and the bottom margin can be sized
+  independently.
 - The title text is rendered to a texture and cached per window; it is only
   re-rendered when the title string, resolved color, font family, font size or
   available width actually change, and repainted immediately on a
