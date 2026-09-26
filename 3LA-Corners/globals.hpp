@@ -4,6 +4,7 @@
 #include <hyprland/src/config/values/types/IntValue.hpp>
 #include <hyprland/src/config/values/types/ColorValue.hpp>
 #include <hyprland/src/config/values/types/FloatValue.hpp>
+#include <hyprland/src/config/values/types/StringValue.hpp>
 
 inline HANDLE                          PHANDLE = nullptr;
 
@@ -22,3 +23,6 @@ inline SP<Config::Values::CIntValue>   g_glow;
 inline SP<Config::Values::CIntValue>   g_glowSize;
 inline SP<Config::Values::CFloatValue> g_glowStrength;
 inline SP<Config::Values::CColorValue> g_colorGlow;
+
+inline SP<Config::Values::CStringValue> g_ignoreClass;
+inline SP<Config::Values::CStringValue> g_ignoreTitle;

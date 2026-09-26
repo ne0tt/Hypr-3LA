@@ -25,7 +25,16 @@ class CCornersDecoration : public IHyprWindowDecoration {
     void                               flashSpawn();
     void                               flashFocus();
 
+    // flips this window's brackets on/off, independent of
+    // ignore_class/ignore_title; driven by the 3la_corners:toggle dispatcher
+    // (bound to a keybind, acts on the currently focused window)
+    void                               toggle();
+
   private:
+    // true if this window should get no brackets at all: toggled off, or
+    // matches ignore_class/ignore_title
+    bool                hidden() const;
+
     // spawn outranks focus; a new window takes focus in the tick it opens
     enum eFlashKind : uint8_t {
         FLASH_NONE = 0,
@@ -41,6 +50,7 @@ class CCornersDecoration : public IHyprWindowDecoration {
     float               flashMultiplier();
 
     PHLWINDOWREF                          m_window;
+    bool                                  m_toggledOff = false;
 
     // last box damageEntire() actually computed while the window was still
     // valid, replayed as-is if damageEntire() runs after the window is

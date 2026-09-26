@@ -4,8 +4,10 @@ Hyprland plugins that give a tiling desktop a CCTV / surveillance-rig
 aesthetic: **[3LA-Corners](#3la-corners)** frames every window with
 targeting-reticle corner brackets, **[3LA-GlitchClose](#3la-glitchclose)**
 kills windows with a GLSL "signal lost" collapse instead of letting them blink
-out, and **[3LA-TitleBars](#3la-titlebars)** reserves a solid-color bar above
-the top of every window, with the window's title drawn on it.
+out, **[3LA-TitleBars](#3la-titlebars)** reserves a solid-color bar above
+the top of every window, with the window's title drawn on it, and
+**[3LA-Tint](#3la-tint)** recolours the greys, blacks and whites of chosen
+windows toward your theme colour so untheme-able apps match the desktop.
 
 All are C++ Hyprland plugins built against **Hyprland 0.56.2**, configured
 either through classic `hyprland.conf` keywords or Hyprland's Lua config
@@ -16,6 +18,7 @@ either through classic `hyprland.conf` keywords or Hyprland's Lua config
 3LA-GlitchClose/          GLSL shader signal-loss collapse
 3LA-GlitchClose-Viewer/   WebGL tuner for the shader above
 3LA-TitleBars/            solid-color title bar overlay
+3LA-Tint/                 GLSL recolour of a window's grey pixels
 hyprpm.toml               plugin manifest + Hyprland/plugin commit pins
 ```
 
@@ -53,7 +56,7 @@ title, while the `btop` and file-manager windows are relabeled by
 | | |
 |---|---|
 | **Hyprland 0.56.2** | Matched on *commit hash*, not version string, so two 0.56.2 builds from different commits still mismatch — see [Rebuilding after a Hyprland update](#rebuilding-after-a-hyprland-update) |
-| **A GL renderer** | 3LA-GlitchClose needs raw GL calls; on a Vulkan backend it logs an error, raises a notification and disables itself rather than misbehaving. 3LA-Corners and 3LA-TitleBars are unaffected. |
+| **A GL renderer** | 3LA-GlitchClose and 3LA-Tint need raw GL calls; on a Vulkan backend they raise a notification and disable themselves rather than misbehaving. 3LA-Corners and 3LA-TitleBars are unaffected. |
 
 Nothing else. The built `.so` links only the C++ runtime — every Hyprland and GL
 symbol (183 of them in 3LA-GlitchClose) is deliberately left undefined and
@@ -126,6 +129,9 @@ hyprpm enable 3LA-TitleBars
 hyprpm list                                       # confirm they show enabled: true
 ```
 
+3LA-Tint is not in `hyprpm.toml` yet, so for now it is built and loaded by
+hand (Option B).
+
 `hyprpm update` clones and configures Hyprland to produce its own header set,
 so it needs the toolchain Hyprland builds with (`cmake`, `meson`, `ninja`,
 `git`) and takes a few minutes the first time.
@@ -156,10 +162,11 @@ cd Hypr-3LA
 make -C 3LA-Corners
 make -C 3LA-GlitchClose
 make -C 3LA-TitleBars
+make -C 3LA-Tint
 ```
 
 Each plugin directory is self-contained and has no build order between them.
-Useful targets, identical across all three:
+Useful targets, identical across every plugin:
 
 | target | effect |
 |---|---|
@@ -182,6 +189,7 @@ Load them into the running compositor:
 hyprctl plugin load "$PWD/3LA-Corners/3LA-Corners.so"
 hyprctl plugin load "$PWD/3LA-GlitchClose/3LA-GlitchClose.so"
 hyprctl plugin load "$PWD/3LA-TitleBars/3LA-TitleBars.so"
+hyprctl plugin load "$PWD/3LA-Tint/3LA-Tint.so"
 ```
 
 `hyprctl plugin load` needs an **absolute** path. To load at startup, from
@@ -191,6 +199,7 @@ hyprctl plugin load "$PWD/3LA-TitleBars/3LA-TitleBars.so"
 hl.plugin.load(os.getenv("HOME") .. "/git/Hypr-3LA/3LA-Corners/3LA-Corners.so")
 hl.plugin.load(os.getenv("HOME") .. "/git/Hypr-3LA/3LA-GlitchClose/3LA-GlitchClose.so")
 hl.plugin.load(os.getenv("HOME") .. "/git/Hypr-3LA/3LA-TitleBars/3LA-TitleBars.so")
+hl.plugin.load(os.getenv("HOME") .. "/git/Hypr-3LA/3LA-Tint/3LA-Tint.so")
 ```
 
 Each plugin also ships an `autoload.sh` as a startup fallback: it loads the
@@ -219,7 +228,7 @@ almost always means an option was created but never passed to
 
 ### Rebuilding after a Hyprland update
 
-**All three plugins must be rebuilt every time Hyprland updates.** The API
+**All the plugins must be rebuilt every time Hyprland updates.** The API
 commit hash is baked in at compile time from the headers and compared against
 the running compositor's at load:
 
@@ -235,7 +244,7 @@ compositor, so a stale build is an annoyance rather than a broken session.
 # hyprpm route
 hyprpm update && hyprpm reload
 
-# manual route -- rebuild-plugins.sh cleans and rebuilds all three (skipping
+# manual route -- rebuild-plugins.sh cleans and rebuilds every plugin (skipping
 # 3LA-GlitchClose-Viewer, which isn't a plugin), and --reload additionally
 # unloads/reloads any of them that are currently running in the compositor
 ./rebuild-plugins.sh --reload
@@ -270,7 +279,7 @@ Re-run it after touching `shader.hpp` or `main.cpp`.
 |---|---|---|
 | `hyprland.pc not found` | headers missing or off `PKG_CONFIG_PATH` | install the Hyprland headers package; check `pkg-config --modversion hyprland` |
 | Notification: *version mismatch (rebuild against running Hyprland)* | plugin built against different headers than the running compositor | rebuild — see above |
-| Notification: *requires the GL renderer* | Hyprland is on the Vulkan backend | 3LA-GlitchClose cannot run there; 3LA-Corners still works |
+| Notification: *requires the GL renderer* | Hyprland is on the Vulkan backend | 3LA-GlitchClose and 3LA-Tint cannot run there; 3LA-Corners and 3LA-TitleBars still work |
 | `hyprctl plugin load` returns an error | relative path, or already loaded | use an absolute path; `hyprctl plugin unload` first |
 | `keyword can't work with non-legacy parsers` | `hyprctl keyword` against the Lua config | use `hyprctl eval 'hl.config{...}'` instead |
 | `unknown config key 'plugin.…'` | plugin not loaded, or option never registered | check `hyprctl plugin list`; wrap startup config in `pcall` |
@@ -287,6 +296,7 @@ pcall(hl.config, { plugin = {
     ["3la_corners"]      = { offset = 10, length = 40, thickness = 1 },
     ["3la_glitch_close"] = { duration = 700, strength = 1.0, text = "SIGNAL LOST" },
     ["3la_titlebars"]    = { height = 24, gap = 7, ["gap.bottom"] = 7 },
+    ["3la_tint"]         = { match_class = "^(google-chrome)$", strength = 0.3 },
 } })
 ```
 
@@ -301,7 +311,7 @@ hyprctl eval 'hl.config({ plugin = { ["3la_glitch_close"] = { strength = 2.0 } }
 hyprctl getoption plugin:3la_glitch_close:duration   # inspect
 ```
 
-All three plugins read their colours from config on every frame, so feeding
+All the plugins read their colours from config on every frame, so feeding
 matugen-generated globals into the `col.*` options re-themes a live effect with
 no plugin reload.
 
@@ -317,11 +327,13 @@ registration doesn't take:
 hl.plugin.load(os.getenv("HOME") .. "/git/Hypr-3LA/3LA-Corners/3LA-Corners.so")
 hl.plugin.load(os.getenv("HOME") .. "/git/Hypr-3LA/3LA-GlitchClose/3LA-GlitchClose.so")
 hl.plugin.load(os.getenv("HOME") .. "/git/Hypr-3LA/3LA-TitleBars/3LA-TitleBars.so")
+hl.plugin.load(os.getenv("HOME") .. "/git/Hypr-3LA/3LA-Tint/3LA-Tint.so")
 
 hl.on("hyprland.start", function()
     hl.exec_cmd(os.getenv("HOME") .. "/git/Hypr-3LA/3LA-Corners/autoload.sh")
     hl.exec_cmd(os.getenv("HOME") .. "/git/Hypr-3LA/3LA-GlitchClose/autoload.sh")
     hl.exec_cmd(os.getenv("HOME") .. "/git/Hypr-3LA/3LA-TitleBars/autoload.sh")
+    hl.exec_cmd(os.getenv("HOME") .. "/git/Hypr-3LA/3LA-Tint/autoload.sh")
 end)
 
 require("config.colors")  -- matugen globals, before anything that uses them
@@ -992,3 +1004,134 @@ one-off testing.
   `inactive_opacity`): only the configured colors' own alpha, scaled by this
   plugin's own `opacity.active`/`opacity.inactive`, controls them. The shadow
   and text both fade along with the bar's own alpha.
+
+---
+
+# 3LA-Tint
+
+Recolours the grey, black and white pixels of chosen windows toward one theme
+colour, keeping each pixel's own lightness. Saturated pixels (images, video,
+coloured UI) are left alone. The use case is apps that ignore your theme — a
+browser, a web app, an Electron tool — whose neutral chrome and backgrounds can
+then pick up the matugen colour the rest of the desktop uses.
+
+A window is tinted when its class **or** its title matches a regex. The tint
+covers the window's subsurfaces and popups (menus, dropdowns) too.
+
+## Example: theming Chrome from matugen
+
+From a working `config/plugins.lua`. `source_color` is the global matugen
+writes into `config/colors.lua`, so a theme change re-tints on the next config
+reload:
+
+```lua
+-- 3LA-Tint: recolour grey/black/white pixels of one window toward the matugen
+-- SOURCE colour (seed), keeping each pixel's lightness. Saturated pixels are
+-- left alone. Covers the window's subsurfaces and popups too.
+-- Repo: ~/git/Hypr-3LA/3LA-Tint (rebuild with `make` after Hyprland updates)
+-- `source_color` is the global written by matugen into config/colors.lua, so a
+-- theme change re-tints on the next config reload.
+pcall(hl.config, {
+    plugin = {
+        ["3la_tint"] = {
+            enabled = 1,
+            -- Windows to tint: regexes like 3LA-TitleBars' ignore_class/ignore_title,
+            -- but a match here means "tint". A window is tinted if either list
+            -- matches. Read exact strings off `hyprctl clients`; a literal dot is
+            -- \\. in this Lua source.
+            match_title = "^(" .. table.concat({
+                "Task Manager TMOG",
+                "God's Eye View",
+            }, "|") .. ")$",
+            match_class = "^(" .. table.concat({
+                --"cool-retro-term",
+                "google-chrome",
+            }, "|") .. ")$",
+            ["col.tint"] = source_color,       -- matugen source/seed colour
+            strength = 0.30,                    -- 0..1 blend of the tint over greys
+            sat_lo = 0.06,                     -- chroma <= this: fully tinted
+            sat_hi = 0.20,                     -- chroma >= this: untouched
+            min_luma = 0.0,                    -- 0 = tint black too
+            light_lo = 0.04,                   -- lightness black maps to
+            light_hi = 0.90,                   -- lightness white maps to
+        }
+    }
+})
+```
+
+Chrome web apps (`--app` windows, installed PWAs) get their own class, e.g.
+`chrome-www.youtube.com__-Default`, so a `^(google-chrome)$` class match tints
+normal browser windows but leaves such an app alone — handy for keeping video
+untouched.
+
+## Config
+
+Defaults shown:
+
+```lua
+hl.config({ plugin = { ["3la_tint"] = {
+    enabled = 1,              -- 0 = off
+    match_title = "",         -- regex of window titles to tint (empty = none)
+    match_class = "",         -- regex of window classes to tint (empty = none)
+    ["col.tint"] = "rgba(2decececff)", -- only its hue and saturation are used
+    strength = 1.0,           -- blend of the tint over greys (0..1)
+    sat_lo = 0.06,            -- chroma at or below which a pixel is fully tinted
+    sat_hi = 0.20,            -- chroma at or above which a pixel is left alone
+    min_luma = 0.0,           -- pixels darker than this stay untinted (0 = tint black too)
+    light_lo = 0.04,          -- HSL lightness pure black is remapped to
+    light_hi = 0.90,          -- HSL lightness pure white is remapped to
+} } })
+```
+
+How a pixel is recoloured:
+
+- **Which pixels:** chroma (`max(rgb) - min(rgb)`) decides. At or below
+  `sat_lo` the pixel is fully tinted, at or above `sat_hi` it is untouched, and
+  in between it fades smoothly, so anti-aliased edges of coloured content don't
+  band. `min_luma` optionally protects near-black pixels.
+- **What colour:** the hue and saturation of `col.tint`, with the pixel's own HSL
+  lightness remapped into `[light_lo, light_hi]`. Without the remap pure black
+  and pure white would stay colourless whatever the tint; `light_lo`/`light_hi`
+  pull them just far enough in to carry the hue.
+- **How much:** `strength` blends the result over the original. Low values
+  (0.2–0.4) give a subtle cast; 1.0 fully recolours the greys.
+
+## How it renders
+
+At `RENDER_PRE_WINDOW` for a matching window the plugin notes where that
+window's draws start in Hyprland's render pass; at `RENDER_POST_WINDOW` it
+collects the surface elements (main surface, subsurfaces, popups) the window
+just queued and adds one custom pass element right after them. When the pass
+runs, that element copies those boxes out of the framebuffer being drawn and
+draws them back through the tint shader. Anything drawn later — other windows,
+layers, the cursor — stays on top and untinted.
+
+It is built to cost nothing when nothing changes:
+
+- **damage-only:** each frame only the damaged part of a box is copied and
+  re-drawn, so a blinking caret costs a caret-sized pass, not a window-sized
+  one, and no pixel is tinted twice across frames. A few scattered damage rects
+  are copied separately rather than as one spanning rectangle.
+- **cached matching:** `std::regex` is slow, so the match result is memoised
+  per window and only re-evaluated when its class, title or a pattern changes.
+- **cheap shader:** the tint's hue/saturation are computed once on the CPU, and
+  the rounded-corner maths only runs for pixels actually in a corner.
+
+## Notes
+
+- **Menu shadows aren't tinted.** A popup's box includes its translucent drop
+  shadow, and tinting the composited framebuffer there would tint whatever lies
+  behind the menu, leaving a tinted halo. The shader reads the popup's own
+  buffer alpha and only tints where the surface is at least half opaque. The
+  check is skipped for surfaces the client declares fully opaque (Chrome's main
+  window), and works on rotated monitors too.
+- Rounded window corners are respected: the main surface's rounding and
+  rounding power are passed to the shader, so the pixels outside the corner
+  curve are left alone.
+- A window mid-animation (open/close/move with a transform) is drawn into a
+  separate pass, so the tint skips those frames and returns when it settles.
+- `col.tint` changes take effect on the next config reload, which also damages
+  every monitor so the whole window re-tints at once.
+- Requires the GL renderer; on a Vulkan backend it notifies and does nothing.
+- `match_class` / `match_title` are C++ `std::regex`, **not** Lua patterns. An
+  invalid regex matches nothing rather than erroring.
