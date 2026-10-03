@@ -74,6 +74,14 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         makeShared<Config::Values::CFloatValue>("plugin:3la_corners:glow.strength", "overall glow intensity (0..1)", 0.5F, Config::Values::SFloatValueOptions{.min = 0.F, .max = 1.F});
     g_colorGlow = makeShared<Config::Values::CColorValue>("plugin:3la_corners:col.glow", "glow color (0 = follow the bracket's own color)", 0);
 
+    g_lines = makeShared<Config::Values::CIntValue>("plugin:3la_corners:lines", "draw lines joining the brackets along each edge (0 = off)", 0,
+                                                     Config::Values::SIntValueOptions{.min = 0, .max = 1});
+    g_linesThickness =
+        makeShared<Config::Values::CIntValue>("plugin:3la_corners:lines.thickness", "thickness of the joining lines", 1, Config::Values::SIntValueOptions{.min = 1});
+    g_linesOffset = makeShared<Config::Values::CIntValue>("plugin:3la_corners:lines.offset",
+                                                          "shift the joining lines inward toward the window (px, negative = outward)", 0);
+    g_colorLines = makeShared<Config::Values::CColorValue>("plugin:3la_corners:col.lines", "joining line color (0 = follow the bracket's own color)", 0);
+
     HyprlandAPI::addConfigValueV2(PHANDLE, g_offset);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_length);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_thickness);
@@ -88,6 +96,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValueV2(PHANDLE, g_glowSize);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_glowStrength);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_colorGlow);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_lines);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_linesThickness);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_linesOffset);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_colorLines);
 
     g_openListener  = Event::bus()->m_events.window.open.listen([](const PHLWINDOW& w) { addDeco(w, true); });
     // window.destroy fires once the window is already torn down (it's handed
@@ -166,4 +178,8 @@ APICALL EXPORT void PLUGIN_EXIT() {
     g_glowSize.reset();
     g_glowStrength.reset();
     g_colorGlow.reset();
+    g_lines.reset();
+    g_linesThickness.reset();
+    g_linesOffset.reset();
+    g_colorLines.reset();
 }

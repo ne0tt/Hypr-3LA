@@ -24,5 +24,10 @@ inline SP<Config::Values::CIntValue>   g_glowSize;
 inline SP<Config::Values::CFloatValue> g_glowStrength;
 inline SP<Config::Values::CColorValue> g_colorGlow;
 
+inline SP<Config::Values::CIntValue>   g_lines;
+inline SP<Config::Values::CIntValue>   g_linesThickness;
+inline SP<Config::Values::CIntValue>   g_linesOffset;
+inline SP<Config::Values::CColorValue> g_colorLines;
+
 inline SP<Config::Values::CStringValue> g_ignoreClass;
 inline SP<Config::Values::CStringValue> g_ignoreTitle;

@@ -43,6 +43,7 @@ class CCornersDecoration : public IHyprWindowDecoration {
     };
 
     std::array<CBox, 8> cornerBoxes(const Vector2D& pos, const Vector2D& size, double outerDist, double topExtra) const;
+    std::array<CBox, 4> lineBoxes(const Vector2D& pos, const Vector2D& size, double outerDist, double topExtra) const;
     double              extraTopReserved() const;
     void                drawGlow(const CBox& box, const CHyprColor& color, float alpha) const;
     void                flash(eFlashKind kind, int count, int duration);

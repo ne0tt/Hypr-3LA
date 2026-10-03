@@ -20,7 +20,13 @@ output = "3LA-GlitchClose/3LA-GlitchClose.so"
 build = ["make -C 3LA-GlitchClose all"]
 
 [3LA-TitleBars]
-description = "Solid-color title bar drawn over the top of every window"
+description = "Solid-color title bar reserved above every window, with its title"
 authors = ["sispx"]
 output = "3LA-TitleBars/3LA-TitleBars.so"
 build = ["make -C 3LA-TitleBars all"]
+
+[3LA-Tint]
+description = "Shader recolour of chosen windows' grey/black/white pixels toward a theme colour"
+authors = ["sispx"]
+output = "3LA-Tint/3LA-Tint.so"
+build = ["make -C 3LA-Tint all"]

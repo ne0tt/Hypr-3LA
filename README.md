@@ -118,7 +118,7 @@ better if you are editing the plugins, since it skips the header rebuild.
 ### Option A — hyprpm
 
 `hyprpm` reads [`hyprpm.toml`](hyprpm.toml) from the repo root, which declares
-all three plugins and their `make` lines.
+all four plugins and their `make` lines.
 
 ```sh
 hyprpm update                                     # build headers for your Hyprland
@@ -126,11 +126,9 @@ hyprpm add https://github.com/ne0tt/Hypr-3LA
 hyprpm enable 3LA-Corners
 hyprpm enable 3LA-GlitchClose
 hyprpm enable 3LA-TitleBars
+hyprpm enable 3LA-Tint
 hyprpm list                                       # confirm they show enabled: true
 ```
-
-3LA-Tint is not in `hyprpm.toml` yet, so for now it is built and loaded by
-hand (Option B).
 
 `hyprpm update` clones and configures Hyprland to produce its own header set,
 so it needs the toolchain Hyprland builds with (`cmake`, `meson`, `ninja`,
@@ -180,7 +178,8 @@ exports Hyprland needs survive stripping either way, so `make debug` is only
 worth it when you actually need a readable backtrace.
 
 ```sh
-ls -la 3LA-Corners/3LA-Corners.so 3LA-GlitchClose/3LA-GlitchClose.so 3LA-TitleBars/3LA-TitleBars.so
+ls -la 3LA-Corners/3LA-Corners.so 3LA-GlitchClose/3LA-GlitchClose.so \
+      3LA-TitleBars/3LA-TitleBars.so 3LA-Tint/3LA-Tint.so
 ```
 
 Load them into the running compositor:
@@ -355,6 +354,7 @@ pcall(hl.config, {
             flash_on_focus = 1, focus_flash_count = 3, focus_flash_duration = 75,
             glow = 1, ["glow.size"] = 10, ["glow.strength"] = 0.4,
             ["col.glow"] = 0,           -- follow the bracket color
+            lines = 1, ["lines.thickness"] = 1, -- join the brackets into a frame
         }
     }
 })
@@ -384,7 +384,8 @@ pcall(hl.config, {
     plugin = {
         ["3la_titlebars"] = {
             height = 24,
-            gap = 8,             -- above the bar and on both sides
+            gap = 8,             -- on both sides (and above, unless gap.top is set)
+            ["gap.top"] = 4,     -- above the bar, overrides `gap` there
             ["gap.bottom"] = 4,  -- below the bar, sized independently of `gap`
 
             ["opacity.active"] = active_opacity,     -- mirrors decoration:active_opacity
@@ -402,7 +403,7 @@ pcall(hl.config, {
 
             ignore_class = "^(code|chrome-www\\.youtube\\.com__-Default|BambuStudio)$",
             ignore_title = "^(LEFT|RIGHT|MAIN-LEFT|MAIN-RIGHT|BOTTOM-RIGHT)$",
-            title_rules = "...", -- see "Custom titles" above for the syntax
+            title_rules = "...", -- see "Custom titles" below for the syntax
         }
     }
 })
@@ -471,6 +472,11 @@ hl.config({ plugin = { ["3la_corners"] = {
     ["glow.size"] = 12,   -- halo spread distance (px)
     ["glow.strength"] = 0.5, -- overall halo intensity (0..1)
     ["col.glow"] = 0,     -- 0 = follow the bracket's own color
+
+    lines = 0,               -- lines joining the brackets along each edge (0 = off)
+    ["lines.thickness"] = 1, -- joining line thickness (px), capped at `thickness`
+    ["lines.offset"] = 0,    -- shift lines inward toward the window (px, negative = outward)
+    ["col.lines"] = 0,       -- 0 = follow the bracket's own color
 } } })
 ```
 
@@ -529,6 +535,15 @@ The decoration's damage region grows by `glow.size` whenever `glow` is on,
 because the halo extends past the bracket boxes; without that its outer edge
 leaves trails while a window is moved or resized.
 
+### Joining lines
+
+`lines = 1` draws a line between the arm tips of neighbouring brackets on every
+edge, turning the brackets into a full frame. The lines sit flush with the
+brackets' outer edge, are `lines.thickness` px thick (never thicker than the
+brackets), and flash along with them. `lines.offset` shifts them inward toward
+the window by that many px; a negative value pushes them outward. `col.lines = 0` follows the bracket's own
+colour; set it to give the lines their own colour.
+
 ### Active / inactive styling
 
 The brackets render at **full alpha regardless of focus**, fully decoupled from
@@ -576,6 +591,8 @@ hl.config({ plugin = { ["3la_corners"] = {
   plugin's own margin, so it stays put with 0 extra offset when nothing else
   reserves top space. The core Hyprland window border is unaffected either
   way — only the brackets move.
+- The top brackets (and the top joining line) sit 1 logical px lower than the
+  raw geometry would place them (scaled with the monitor).
 - Brackets are hidden on fullscreen windows. A burst armed on such a window still
   expires on its own schedule, since expiry is time-based rather than frame-driven.
 - Active state is read per-frame from `Desktop::focusState()->isWindowActive()`,
@@ -873,6 +890,7 @@ Defaults shown:
 hl.config({ plugin = { ["3la_titlebars"] = {
     height = 24,             -- bar height (px)
     gap = 7,                 -- gap (px) above the bar and on both sides
+    ["gap.top"] = -1,        -- gap (px) above the bar (-1 = use gap)
     ["gap.bottom"] = 7,      -- gap (px) below the bar, between it and the window underneath
 
     ["col.active"] = "rgba(690005ff)",  -- focused-window bar color
@@ -956,13 +974,15 @@ one-off testing.
 
 ## Notes
 
-- The bar is *reserved* space: tiled windows shrink by `height + gap +
+- The bar is *reserved* space: tiled windows shrink by `height + gap.top +
   gap.bottom` to make room above them, the same way 3LA-Corners reserves space
-  for its brackets. The bar itself is inset by `gap` on the top/left/right and
-  `gap.bottom` on the bottom within that reserved slot, so it floats with a
-  margin instead of touching the window's own top edge or the reserved area's
-  outer boundary -- the top/side margin and the bottom margin can be sized
-  independently.
+  for its brackets. The bar itself is inset by `gap` on the left/right,
+  `gap.top` on top (`-1`, the default, reuses `gap`) and `gap.bottom` on the
+  bottom within that reserved slot, so it floats with a margin instead of
+  touching the window's own top edge or the reserved area's outer boundary --
+  the side, top and bottom margins can all be sized independently.
+- The bar is drawn 2px wider than `window width - 2 × gap` so its right edge
+  lines up with the window's own right edge rather than stopping short.
 - The title text is rendered to a texture and cached per window; it is only
   re-rendered when the title string, resolved color, font family, font size or
   available width actually change, and repainted immediately on a

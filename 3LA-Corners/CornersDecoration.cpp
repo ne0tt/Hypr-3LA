@@ -146,15 +146,31 @@ double CCornersDecoration::extraTopReserved() const {
     return std::max<double>(0.0, TOTAL - OWN);
 }
 
-std::array<CBox, 8> CCornersDecoration::cornerBoxes(const Vector2D& pos, const Vector2D& size, double outerDist, double topExtra) const {
+struct SFrame {
+    double L, R, U, B; // outer edges
+    double LX, LY;     // bracket arm lengths
+    double T;          // bracket thickness
+};
+
+static SFrame frameGeometry(const Vector2D& pos, const Vector2D& size, double outerDist, double topExtra) {
     const double D = outerDist;
     const double T = std::max<double>(g_thickness->value(), 1);
-    // clamp arm length so opposing brackets meet at most in the middle
-    const double LX = std::clamp<double>(g_length->value(), T, (size.x + 2 * D) / 2.0);
-    const double LY = std::clamp<double>(g_length->value(), T, (size.y + 2 * D) / 2.0);
+    // top brackets nudged down 1 logical px (scaled with the monitor in draw())
+    constexpr double TOPNUDGE = 1.0;
+    return {
+        .L  = pos.x - D,
+        .R  = pos.x + size.x + D,
+        .U  = pos.y - D - topExtra + TOPNUDGE,
+        .B  = pos.y + size.y + D,
+        // clamp arm length so opposing brackets meet at most in the middle
+        .LX = std::clamp<double>(g_length->value(), T, (size.x + 2 * D) / 2.0),
+        .LY = std::clamp<double>(g_length->value(), T, (size.y + 2 * D) / 2.0),
+        .T  = T,
+    };
+}
 
-    const double L = pos.x - D, R = pos.x + size.x + D; // outer corners
-    const double U = pos.y - D - topExtra, B = pos.y + size.y + D;
+std::array<CBox, 8> CCornersDecoration::cornerBoxes(const Vector2D& pos, const Vector2D& size, double outerDist, double topExtra) const {
+    const auto [L, R, U, B, LX, LY, T] = frameGeometry(pos, size, outerDist, topExtra);
 
     // per corner: horizontal arm (full length), vertical arm inset by T to avoid
     // double-blending the corner square with translucent colors
@@ -163,6 +179,24 @@ std::array<CBox, 8> CCornersDecoration::cornerBoxes(const Vector2D& pos, const V
         CBox{R - LX, U, LX, T},      CBox{R - T, U + T, T, LY - T},       // top-right
         CBox{L, B - T, LX, T},       CBox{L, B - LY, T, LY - T},          // bottom-left
         CBox{R - LX, B - T, LX, T},  CBox{R - T, B - LY, T, LY - T},      // bottom-right
+    };
+}
+
+// lines joining the bracket arm tips along each edge, flush with the brackets'
+// outer edge shifted inward by lines.offset (negative = outward); zero/negative
+// length spans (arms meeting) yield empty boxes
+std::array<CBox, 4> CCornersDecoration::lineBoxes(const Vector2D& pos, const Vector2D& size, double outerDist, double topExtra) const {
+    const auto [L, R, U, B, LX, LY, T] = frameGeometry(pos, size, outerDist, topExtra);
+    const double LT = std::min<double>(std::max<Config::INTEGER>(g_linesThickness->value(), 1), T);
+    const double W  = std::max(0.0, (R - LX) - (L + LX));
+    const double H  = std::max(0.0, (B - LY) - (U + LY));
+    const double O  = g_linesOffset->value();
+
+    return {
+        CBox{L + LX, U + O, W, LT},      // top
+        CBox{L + LX, B - LT - O, W, LT}, // bottom
+        CBox{L + O, U + LY, LT, H},      // left
+        CBox{R - LT - O, U + LY, LT, H}, // right
     };
 }
 
@@ -239,8 +273,28 @@ void CCornersDecoration::draw(PHLMONITOR pMonitor, float const& a) {
     // not on every frame -- keeps the brackets plain the rest of the time.
     const bool GLOW = g_glow->value() != 0 && m_flashing;
 
-    for (auto box : cornerBoxes(PWINDOW->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT), //
-                                PWINDOW->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT), D, TOPEXTRA)) {
+    const Vector2D POS  = PWINDOW->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+    const Vector2D SIZE = PWINDOW->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+
+    if (g_lines->value() != 0) {
+        CHyprColor lineCol = col;
+        if (const auto CONFIGURED = g_colorLines->value(); CONFIGURED != 0) {
+            const CHyprColor C{static_cast<uint64_t>(CONFIGURED)};
+            lineCol = CHyprColor{static_cast<float>(C.r), static_cast<float>(C.g), static_cast<float>(C.b), static_cast<float>(C.a * FLASH)};
+        }
+
+        for (auto box : lineBoxes(POS, SIZE, D, TOPEXTRA)) {
+            if (box.w <= 0 || box.h <= 0 || lineCol.a <= 0.F)
+                continue;
+
+            CRectPassElement::SRectData data;
+            data.box   = box.translate(offset).scale(pMonitor->m_scale).round();
+            data.color = lineCol;
+            g_pHyprRenderer->m_renderPass.add(makeUnique<CRectPassElement>(data));
+        }
+    }
+
+    for (auto box : cornerBoxes(POS, SIZE, D, TOPEXTRA)) {
         CBox scaledBox = box.translate(offset).scale(pMonitor->m_scale).round();
 
         if (GLOW)
@@ -278,8 +332,10 @@ void CCornersDecoration::damageEntire() {
 
     // glow layers extend past the bracket boxes themselves, so the damage region
     // must grow by glow.size too or its outer edge leaves trails when moving/resizing.
-    const double GLOWEXPAND = g_glow->value() != 0 ? std::max<Config::INTEGER>(g_glowSize->value(), 0) : 0;
-    const double D          = PWINDOW->getRealBorderSize() + g_offset->value() + g_thickness->value() + GLOWEXPAND;
+    const double GLOWEXPAND  = g_glow->value() != 0 ? std::max<Config::INTEGER>(g_glowSize->value(), 0) : 0;
+    // lines pushed outward by a negative lines.offset land past the brackets
+    const double LINESEXPAND = g_lines->value() != 0 ? std::max<Config::INTEGER>(-g_linesOffset->value(), 0) : 0;
+    const double D           = PWINDOW->getRealBorderSize() + g_offset->value() + g_thickness->value() + std::max(GLOWEXPAND, LINESEXPAND);
     CBox         box        = PWINDOW->geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
     box.translate(PWINDOW->m_floatingOffset).expand(D);
 

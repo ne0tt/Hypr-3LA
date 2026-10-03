@@ -77,6 +77,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
     g_height        = makeShared<Config::Values::CIntValue>("plugin:3la_titlebars:height", "height of the title bar in px", 24, Config::Values::SIntValueOptions{.min = 1});
     g_gap           = makeShared<Config::Values::CIntValue>("plugin:3la_titlebars:gap", "gap (px) around the bar: above and on both sides", 7, Config::Values::SIntValueOptions{.min = 0});
+    g_gapTop        = makeShared<Config::Values::CIntValue>("plugin:3la_titlebars:gap.top", "gap (px) above the bar (-1 = use gap)", -1, Config::Values::SIntValueOptions{.min = -1});
     g_gapBottom     = makeShared<Config::Values::CIntValue>("plugin:3la_titlebars:gap.bottom", "gap (px) below the bar, between it and the window underneath", 7, Config::Values::SIntValueOptions{.min = 0});
     g_colorActive   = makeShared<Config::Values::CColorValue>("plugin:3la_titlebars:col.active", "title bar color on the focused window", 0xFF690005);
     g_colorInactive = makeShared<Config::Values::CColorValue>("plugin:3la_titlebars:col.inactive", "title bar color on unfocused windows (0 = follow col.active)", 0);
@@ -104,6 +105,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValueV2(PHANDLE, g_height);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_gap);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_gapBottom);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_gapTop);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_colorActive);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_colorInactive);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_opacityActive);
@@ -193,6 +195,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
     g_height.reset();
     g_gap.reset();
     g_gapBottom.reset();
+    g_gapTop.reset();
     g_colorActive.reset();
     g_colorInactive.reset();
     g_opacityActive.reset();
