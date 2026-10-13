@@ -1,0 +1,722 @@
+#include "GlitchCloseEffect.hpp"
+#include "globals.hpp"
+#include "shader.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <regex>
+
+#include <hyprland/src/desktop/state/FocusState.hpp>
+#include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/desktop/Workspace.hpp>
+#include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
+#include <hyprland/src/managers/eventLoop/EventLoopTimer.hpp>
+#include <hyprland/src/output/Monitor.hpp>
+#include <hyprland/src/protocols/XDGShell.hpp>
+#include <hyprland/src/protocols/XDGDialog.hpp>
+#include <hyprland/src/debug/log/Logger.hpp>
+#include <hyprland/src/render/OpenGL.hpp>
+#include <hyprland/src/render/Renderer.hpp>
+#include <hyprland/src/render/Shader.hpp>
+#include <hyprland/src/render/Texture.hpp>
+#include <hyprland/src/render/pass/RectPassElement.hpp>
+#include <hyprland/src/render/pass/TexPassElement.hpp>
+
+static uint32_t xorshift(uint32_t& s) {
+    s ^= s << 13;
+    s ^= s >> 17;
+    s ^= s << 5;
+    return s;
+}
+
+static double elapsedMsBetween(const std::chrono::steady_clock::time_point& from, const std::chrono::steady_clock::time_point& to) {
+    return std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(to - from).count();
+}
+
+// config color, where 0 means "use the built-in default"
+static CHyprColor colorOr(const SP<Config::Values::CColorValue>& v, const CHyprColor& def) {
+    const auto C = v->value();
+    return C != 0 ? CHyprColor{static_cast<uint64_t>(C)} : def;
+}
+
+static float unit(const SP<Config::Values::CFloatValue>& v) {
+    return std::clamp(static_cast<float>(v->value()), 0.F, 1.F);
+}
+
+// Single source of truth for the timing knobs. dispatchClose schedules the real
+// close from these, onWindowClose sizes its staleness window from them and the
+// render loop runs the burst/hold/fade from them: derived separately they drift.
+CGlitchCloseManager::STiming CGlitchCloseManager::timing() {
+    return {
+        .duration = static_cast<double>(std::max<int64_t>(g_duration->value(), 100)),
+        .fade     = static_cast<double>(std::max<int64_t>(g_fade->value(), 0)),
+        .hold     = static_cast<double>(std::max<int64_t>(g_hold->value(), 0)),
+        .closeAt  = std::clamp(static_cast<double>(g_closeAt->value()), 0.0, 1.0),
+    };
+}
+
+// recompiles only when the pattern string differs from what's cached, so the
+// common case (pattern unchanged since last call) is just a regex_search
+bool CGlitchCloseManager::matches(std::optional<std::regex>& cache, std::string& cachedPattern, const std::string& pattern, const std::string& s) {
+    if (pattern.empty() || s.empty())
+        return false;
+
+    if (!cache || pattern != cachedPattern) {
+        cachedPattern = pattern;
+        try {
+            cache = std::regex{pattern};
+        } catch (const std::regex_error&) {
+            cache.reset(); // bad user regex: ignore the filter
+            return false;
+        }
+    }
+
+    return std::regex_search(s, *cache);
+}
+
+// Suppresses (or restores) the window's OWN close animation. Without this the
+// window's fade-out snapshot plays as our overlay ends, so a close that is meant
+// to end on a glitched window ends on the real one fading out instead.
+void CGlitchCloseManager::setNoAnim(const PHLWINDOWREF& w, bool on) {
+    const auto W = w.lock();
+    if (!W || !W->m_ruleApplicator)
+        return;
+
+    // PRIORITY_SET_PROP is the same slot `hyprctl setprop` writes, so it wins
+    // over any windowrule and can be lifted again without touching the rules
+    if (on)
+        W->m_ruleApplicator->noAnim().set(true, Desktop::Types::PRIORITY_SET_PROP);
+    else
+        W->m_ruleApplicator->noAnim().unset(Desktop::Types::PRIORITY_SET_PROP);
+}
+
+// Compiled lazily on first draw: that happens mid-render, so the EGL context is
+// guaranteed current. A failure latches -- there is no point recompiling the
+// same broken source once per frame for the rest of the session.
+bool CGlitchCloseManager::ensureShader() {
+    if (m_shader)
+        return true;
+    if (m_shaderFailed)
+        return false;
+
+    m_shaderFailed = true; // cleared only on full success below
+
+    if (g_pHyprRenderer->type() != Render::IHyprRenderer::RT_GL) {
+        Log::logger->log(Log::ERR, "[3LA-GlitchClose] not a GL renderer, effect disabled");
+        HyprlandAPI::addNotification(PHANDLE, "[3LA-GlitchClose] requires the GL renderer", CHyprColor{1.F, 0.2F, 0.2F, 1.F}, 5000);
+        return false;
+    }
+
+    auto shader = makeShared<CShader>();
+    if (!shader->createProgram(GLITCH_VERT, GLITCH_FRAG)) {
+        Log::logger->log(Log::ERR, "[3LA-GlitchClose] glitch shader failed to compile, effect disabled");
+        HyprlandAPI::addNotification(PHANDLE, "[3LA-GlitchClose] shader compilation failed", CHyprColor{1.F, 0.2F, 0.2F, 1.F}, 5000);
+        return false;
+    }
+
+    const GLuint PROG = shader->program();
+
+    // these names are not in eShaderUniform, so CShader::setUniform* cannot
+    // reach them -- resolve by name once and set them with raw glUniform*
+    auto loc      = [PROG](const char* n) { return glGetUniformLocation(PROG, n); };
+    m_uni.tex           = loc("tex");
+    m_uni.hasTex        = loc("hasTex");
+    m_uni.uvOffset      = loc("uvOffset");
+    m_uni.uvXf          = loc("uvXf");
+    m_uni.resolution    = loc("resolution");
+    m_uni.progress      = loc("progress");
+    m_uni.env           = loc("env");
+    m_uni.seed          = loc("seed");
+    m_uni.strength      = loc("strength");
+    m_uni.aberration    = loc("aberration");
+    m_uni.blocks        = loc("blocks");
+    m_uni.noiseAmount   = loc("noiseAmount");
+    m_uni.scanlines     = loc("scanlines");
+    m_uni.roll          = loc("roll");
+    m_uni.melt          = loc("melt");
+    m_uni.tear          = loc("tear");
+    m_uni.tearSpeed     = loc("tearSpeed");
+    m_uni.ghost         = loc("ghost");
+    m_uni.vignette      = loc("vignette");
+    m_uni.backdropAlpha = loc("backdropAlpha");
+    m_uni.colBackdrop   = loc("colBackdrop");
+    m_uni.colFringe1    = loc("colFringe1");
+    m_uni.colFringe2    = loc("colFringe2");
+
+    // our own quad rather than CShader's private VAO, so nothing here depends on
+    // Hyprland internals we cannot see
+    const GLint POS = glGetAttribLocation(PROG, "pos");
+    const GLint UV  = glGetAttribLocation(PROG, "texcoord");
+
+    glGenVertexArrays(1, &m_vao);
+    glGenBuffers(1, &m_vbo);
+    glBindVertexArray(m_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(Render::GL::fullVerts), Render::GL::fullVerts.data(), GL_STATIC_DRAW);
+
+    if (POS >= 0) {
+        glEnableVertexAttribArray(POS);
+        glVertexAttribPointer(POS, 2, GL_FLOAT, GL_FALSE, sizeof(Render::GL::SVertex), reinterpret_cast<void*>(offsetof(Render::GL::SVertex, x)));
+    }
+    if (UV >= 0) {
+        glEnableVertexAttribArray(UV);
+        glVertexAttribPointer(UV, 2, GL_FLOAT, GL_FALSE, sizeof(Render::GL::SVertex), reinterpret_cast<void*>(offsetof(Render::GL::SVertex, u)));
+    }
+
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    // sampler binding is per-program state and never changes, so it is uploaded
+    // once here rather than on every frame of every effect
+    Render::GL::g_pHyprOpenGL->useShader(shader);
+    glUniform1i(m_uni.tex, 0);
+
+    m_shader       = shader;
+    m_shaderFailed = false;
+    Log::logger->log(Log::INFO, "[3LA-GlitchClose] glitch shader compiled");
+    return true;
+}
+
+bool CGlitchCloseManager::ensureTarget(SEffect& e, const PHLMONITOR& mon) {
+    const int W = std::max(1, static_cast<int>(std::lround(e.localBox.w * mon->m_scale)));
+    const int H = std::max(1, static_cast<int>(std::lround(e.localBox.h * mon->m_scale)));
+
+    // monitor scale can change under a live effect; reallocate if it does
+    if (e.target && e.target->isAllocated() && e.target->m_size == Vector2D{static_cast<double>(W), static_cast<double>(H)})
+        return true;
+
+    e.uvValid = false; // rebuilt against the new size in buildUV()
+
+    e.target  = g_pHyprRenderer->createFB("3LA-GlitchClose");
+    if (!e.target)
+        return false;
+
+    if (!e.target->alloc(W, H)) {
+        e.target.reset();
+        return false;
+    }
+
+    return true;
+}
+
+bool CGlitchCloseManager::beginEffect(const PHLWINDOW& w) {
+    // disabled: no effect, so dispatchClose() falls through to a plain
+    // sendClose() and a client-initiated close just closes
+    if (!g_enabled->value())
+        return false;
+    if (!w) {
+        Log::logger->log(Log::TRACE, "[3LA-GlitchClose] skip: null window");
+        return false;
+    }
+    if (!Desktop::View::validMapped(w)) {
+        Log::logger->log(Log::TRACE, "[3LA-GlitchClose] skip: not validMapped class='{}'", w->m_class);
+        return false;
+    }
+    if (w->isX11OverrideRedirect()) {
+        Log::logger->log(Log::TRACE, "[3LA-GlitchClose] skip: X11 override-redirect class='{}'", w->m_class);
+        return false;
+    }
+
+    // one effect per window: a close landing while an effect is already playing
+    // over that window would stack a second overlay on the same box
+    for (const auto& E : m_effects) {
+        if (E.window.lock() == w) {
+            Log::logger->log(Log::TRACE, "[3LA-GlitchClose] skip: effect already playing class='{}'", w->m_class);
+            return false;
+        }
+    }
+
+    // child windows (file open/save dialogs etc.): parent() covers xdg-toplevel
+    // parents (incl. xdg-foreign) and X11 transient-for, isModal() the X11
+    // modal hint, m_dialog the xdg-dialog-v1 modal flag
+    if (g_ignoreChildren->value() > 0) {
+        if (w->parent() || w->isModal())
+            return false;
+        if (!w->m_isX11 && w->m_xdgSurface && w->m_xdgSurface->m_toplevel && w->m_xdgSurface->m_toplevel->m_dialog && w->m_xdgSurface->m_toplevel->m_dialog->modal)
+            return false;
+    }
+
+    // portal file choosers (VS Code / Electron / Flatpak "Open File" dialogs)
+    // live in a separate process and mostly never get parented on Wayland —
+    // catch them by class/title instead. the CACHED m_class/m_title, not
+    // fetchClass()/fetchTitle(): the close event fires from unmapWindow(),
+    // when the xdg toplevel resource the fetchers read may already be gone
+    if (matches(m_ignoreClassRe, m_ignoreClassPattern, g_ignoreClass->value(), w->m_class.empty() ? w->fetchClass() : w->m_class))
+        return false;
+    if (matches(m_ignoreTitleRe, m_ignoreTitlePattern, g_ignoreTitle->value(), w->m_title.empty() ? w->fetchTitle() : w->m_title))
+        return false;
+
+    const auto MON = w->m_monitor.lock();
+    if (!MON)
+        return false;
+
+    const auto SIZE = w->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+    if (SIZE.x < g_minSize->value() || SIZE.y < g_minSize->value())
+        return false;
+
+    Vector2D pos = w->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT) + w->m_floatingOffset;
+    if (w->m_workspace)
+        pos = pos + w->m_workspace->m_renderOffset->value();
+
+    // Stay strictly INSIDE the border, so the window keeps a clean border ring
+    // framing the collapse and no border pixel is ever fed through the shader.
+    // Without the inset the effect box sits flush against the border and edge
+    // sampling (linear filtering at the 0..1 boundary) drags border colour into
+    // the glitch, which shows up as a bright 1px frame around the effect.
+    const double BORDER = static_cast<double>(std::max<int64_t>(w->getRealBorderSize(), 0));
+    CBox         global = CBox{pos, SIZE}.expand(-BORDER);
+    if (global.w < 1.0 || global.h < 1.0)
+        return false;
+
+    SEffect  e;
+    e.window    = w;
+    e.monitor   = MON;
+    e.workspace = w->m_workspace;
+    e.globalBox = global;
+    e.localBox  = CBox{global.pos() - MON->m_position, global.size()};
+    e.start     = std::chrono::steady_clock::now();
+
+    uint32_t rng = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(e.start.time_since_epoch()).count()) ^ 0x9E3779B9u;
+    // kept small: it lands inside sin() in the shader's hash, where a large
+    // argument would cost precision
+    e.seed = static_cast<float>(xorshift(rng) % 10000) / 1000.0F;
+
+    if (!ensureTarget(e, MON))
+        return false;
+
+    // capture the window's pixels for the shader to tear apart. can fail for a
+    // window already on its way out — the shader then falls back to static only.
+    e.snapshot = g_pHyprRenderer->makeSnapshotFB(w);
+    if (e.snapshot && !e.snapshot->isAllocated())
+        e.snapshot.reset();
+
+    // From here the window must never be seen again: the overlay owns those
+    // pixels until it is done. Hyprland's own close animation would otherwise
+    // play the real window out from under it as the effect ends.
+    setNoAnim(e.window, true);
+    e.noAnimSet = true;
+
+    Log::logger->log(Log::DEBUG, "[3LA-GlitchClose] glitch on class='{}' title='{}'", w->m_class, w->m_title);
+
+    m_effects.emplace_back(std::move(e));
+    g_pHyprRenderer->damageBox(global);
+    return true;
+}
+
+// close the focused window, glitch style: the collapse plays over the live
+// window (its tile slot stays occupied), and the real close request goes out at
+// close_at * duration — by default on the frame the burst ends. The overlay
+// then HOLDS at full collapse until the window is actually gone, and only fades
+// after that, so the last thing on screen is always glitch and never the real
+// window coming back into view.
+SDispatchResult CGlitchCloseManager::dispatchClose() {
+    const auto W = Desktop::focusState()->window();
+    if (!W)
+        return {.success = false, .error = "no active window"};
+
+    for (const auto& P : m_pending) {
+        if (P.window.lock() == W)
+            return {}; // close already in flight for this window
+    }
+
+    if (!beginEffect(W)) {
+        W->sendClose(); // too small / not effect-worthy: behave like killactive
+        return {};
+    }
+
+    // close_at is a fraction of the BURST. at the default 1.0 the close goes out
+    // as the burst ends, so the tile slot is held for the whole collapse; the
+    // hold that follows covers the app's own close latency, so the window is
+    // gone before anything fades. lower values send the close mid-burst.
+    const auto T     = timing();
+    const auto DELAY = std::chrono::milliseconds(static_cast<int64_t>(T.duration * T.closeAt));
+
+    auto         timer = makeShared<CEventLoopTimer>(
+        DELAY,
+        [this, wref = PHLWINDOWREF{W}](SP<CEventLoopTimer> self, void*) {
+            if (const auto W = wref.lock())
+                W->sendClose();
+            // the pending entry stays until the close event lands, so the
+            // resulting window.close does not spawn a duplicate effect
+            g_pEventLoopManager->removeTimer(self);
+        },
+        nullptr);
+
+    g_pEventLoopManager->addTimer(timer);
+    m_pending.emplace_back(SPending{.window = W, .timer = timer});
+    return {};
+}
+
+void CGlitchCloseManager::onWindowClose(const PHLWINDOW& w) {
+    Log::logger->log(Log::TRACE, "[3LA-GlitchClose] window.close received, class='{}'", w ? w->m_class : "<null>");
+    // Drop dead refs and, if this close was one we initiated, swallow it — its
+    // effect has been playing since the dispatcher fired.
+    //
+    // A pending entry exists exactly as long as the effect it belongs to: it is
+    // added only after beginEffect() succeeded and dropped again when that
+    // effect is erased. So finding one here means the overlay is still on
+    // screen, and this close must not spawn a second one. The stale case (the
+    // app sat on the close request, e.g. an unsaved-changes dialog, and closed
+    // long after the overlay gave up waiting) needs no time window any more —
+    // the entry is already gone with the effect, and the close falls through to
+    // a fresh post-hoc effect.
+    bool managed = false;
+    std::erase_if(m_pending, [&](const SPending& p) {
+        const auto PW = p.window.lock();
+        if (!PW) {
+            g_pEventLoopManager->removeTimer(p.timer);
+            return true;
+        }
+        if (PW == w) {
+            g_pEventLoopManager->removeTimer(p.timer); // no-op if already fired
+            managed = true;
+            return true;
+        }
+        return false;
+    });
+
+    if (!managed)
+        beginEffect(w);
+}
+
+void CGlitchCloseManager::onRenderStage(eRenderStage stage) {
+    if (stage != RENDER_POST_WINDOWS || m_effects.empty())
+        return;
+
+    const auto MON = g_pHyprRenderer->renderData().pMonitor.lock();
+    if (!MON)
+        return;
+
+    const auto NOW = std::chrono::steady_clock::now();
+    const auto T   = timing();
+
+    for (auto it = m_effects.begin(); it != m_effects.end();) {
+        const auto EMON = it->monitor.lock();
+        if (!EMON) {
+            if (it->noAnimSet)
+                setNoAnim(it->window, false);
+            it = m_effects.erase(it);
+            continue;
+        }
+
+        const double ELAPSED = elapsedMsBetween(it->start, NOW);
+
+        // The burst runs for `duration` and then HOLDS at full collapse: the
+        // fade may only begin once the window is really gone. Fading while it
+        // is still mapped dissolves the glitch back onto the untouched window,
+        // which is the one thing a glitch close must never end on. `hold` caps
+        // the wait -- an app that refuses to die (an unsaved-changes dialog)
+        // gets the fade anyway rather than pinning the glitch on screen.
+        if (!it->fadeStart && ELAPSED >= T.duration && (!Desktop::View::validMapped(it->window) || ELAPSED >= T.duration + T.hold))
+            it->fadeStart = NOW;
+
+        const double FADED = it->fadeStart ? elapsedMsBetween(*it->fadeStart, NOW) : 0.0;
+
+        if (it->fadeStart && FADED >= T.fade) {
+            // only reachable with the window still alive when the hold ran out,
+            // so hand it back the close animation we suppressed
+            if (it->noAnimSet)
+                setNoAnim(it->window, false);
+            // the real close went out at duration * close_at, i.e. before this
+            // point, so the pending entry has done its job. dropping it here is
+            // what keeps an app that never closed from leaving one behind (the
+            // timer is left alone: if it somehow has not fired yet, it must
+            // still send the close the user asked for).
+            std::erase_if(m_pending, [&](const SPending& p) { return p.window.lock() == it->window.lock(); });
+            g_pHyprRenderer->damageBox(it->globalBox);
+            it = m_effects.erase(it); // releases the effect's framebuffers
+            continue;
+        }
+
+        const float ENV = it->fadeStart && T.fade > 0.0 ? std::max(0.F, 1.F - static_cast<float>(FADED / T.fade)) : 1.F;
+
+        // Everything below belongs to the effect's OWN monitor: this stage runs
+        // once per monitor per frame, so damaging from any other monitor's pass
+        // would just resubmit the same region N times on a multi-head setup.
+        if (EMON == MON) {
+            // don't paint over a workspace the closed window was never on
+            const auto WS = it->workspace.lock();
+            if ((!WS || MON->m_activeWorkspace == WS || MON->m_activeSpecialWorkspace == WS) && ensureShader() && ensureTarget(*it, MON)) {
+                renderToTarget(*it, MON, ELAPSED, T.duration, ENV);
+                drawEffect(*it, MON, ELAPSED, T.duration, ENV);
+            }
+
+            // keep the animation running until the effect expires
+            g_pHyprRenderer->damageBox(it->globalBox);
+        }
+
+        ++it;
+    }
+}
+
+void CGlitchCloseManager::onConfigReloaded() {
+    // not strictly required (matches() rebuilds on pattern mismatch anyway),
+    // but frees the compiled regex promptly if the filter was cleared. the
+    // shader reads every other option as a uniform each frame, so there is
+    // nothing else to invalidate.
+    m_ignoreClassRe.reset();
+    m_ignoreTitleRe.reset();
+    m_textTex.reset(); // re-render with the new text/font/size/colour
+}
+
+void CGlitchCloseManager::reset() {
+    // don't leave a "close" the user requested unsent if the plugin unloads
+    for (const auto& P : m_pending) {
+        g_pEventLoopManager->removeTimer(P.timer);
+        if (const auto W = P.window.lock())
+            W->sendClose();
+    }
+    m_pending.clear();
+
+    for (const auto& E : m_effects)
+        if (E.noAnimSet)
+            setNoAnim(E.window, false);
+    m_effects.clear();
+    m_textTex.reset();
+
+    // GL teardown needs the context current -- PLUGIN_EXIT runs outside a frame
+    if (m_shader || m_vao || m_vbo) {
+        Render::GL::g_pHyprOpenGL->makeEGLCurrent();
+
+        if (m_vao)
+            glDeleteVertexArrays(1, &m_vao);
+        if (m_vbo)
+            glDeleteBuffers(1, &m_vbo);
+        m_vao = 0;
+        m_vbo = 0;
+
+        if (m_shader) {
+            m_shader->destroy();
+            m_shader.reset();
+        }
+    }
+
+    m_shaderFailed = false;
+}
+
+// Where the window's pixels live inside the snapshot. makeSnapshotFB can hand
+// back a monitor-sized framebuffer instead of a window-sized one, and it is
+// rendered through the monitor's OWN projection: on a rotated monitor that
+// projection turns logical pixels into panel pixels, so the window sits rotated
+// (and, for 90/270, in a framebuffer whose axes are swapped) inside it. Mapping
+// only a scale therefore samples the wrong rect and feeds the shader a sideways
+// window, which is what made the tearing run down a portrait screen instead of
+// across it.
+//
+// So build the full affine map from the shader's local uv (x right, y UP, both
+// in logical/screen orientation) to snapshot uv, by pushing three corners
+// through the monitor matrix.
+//
+// NO y flip: the snapshot framebuffer is stored TOP-DOWN, so its row r is
+// monitor-local row r directly. An earlier version flipped y here on the
+// assumption that GL framebuffers are bottom-up, which biased every sample by
+// `transformedSize.y - 2*box.y - box.h` -- zero only for a window centred
+// vertically on the monitor, and a visible downward jump for any other. A
+// monitor reserving different amounts top and bottom is enough to trigger it.
+//
+// Every input here is fixed for the effect's life -- the box never moves -- so
+// the result is cached on the effect and rebuilt only if the monitor is
+// rescaled or rotated, or the snapshot resized, under a live effect.
+void CGlitchCloseManager::buildUV(SEffect& e, const PHLMONITOR& mon, const SP<Render::ITexture>& snap) {
+    const Vector2D SNAPSIZE = snap ? snap->m_size : Vector2D{0.0, 0.0};
+    if (e.uvValid && e.uvScale == mon->m_scale && e.uvTransform == static_cast<uint32_t>(mon->m_transform) && e.uvSnapSize == SNAPSIZE)
+        return;
+
+    e.uvValid     = true;
+    e.uvScale     = mon->m_scale;
+    e.uvTransform = static_cast<uint32_t>(mon->m_transform);
+    e.uvSnapSize  = SNAPSIZE;
+
+    e.uvOffset    = {0.0, 0.0};
+    e.uvXf[0]     = 1.F; // column-major mat2: {du, dv}
+    e.uvXf[1]     = 0.F;
+    e.uvXf[2]     = 0.F;
+    e.uvXf[3]     = 1.F;
+
+    if (!snap || (SNAPSIZE - mon->m_pixelSize).size() >= 2.0)
+        return; // window-sized snapshot: local uv is already snapshot uv
+
+    const double SW = SNAPSIZE.x, SH = SNAPSIZE.y;
+    const CBox   PX = CBox{e.localBox}.scale(mon->m_scale);
+    const auto   M  = mon->getTransformMatrix().getMatrix(); // logical px -> panel px
+
+    auto         toTex = [&](double u, double v) {
+        const double   LX = PX.x + u * PX.w;
+        const double   LY = PX.y + v * PX.h;
+        const Vector2D P{M[0] * LX + M[1] * LY + M[2], M[3] * LX + M[4] * LY + M[5]};
+        return Vector2D{P.x / SW, P.y / SH};
+    };
+
+    const Vector2D O = toTex(0.0, 0.0), DU = toTex(1.0, 0.0) - O, DV = toTex(0.0, 1.0) - O;
+    e.uvOffset = O;
+    e.uvXf[0]  = DU.x;
+    e.uvXf[1]  = DU.y;
+    e.uvXf[2]  = DV.x;
+    e.uvXf[3]  = DV.y;
+}
+
+// Runs the shader into the effect's own framebuffer with an identity NDC quad,
+// so none of Hyprland's private projection state is needed. Every piece of
+// global GL state touched here is put back before returning: CRenderPass::render()
+// runs later in this same frame and assumes it owns the context.
+void CGlitchCloseManager::renderToTarget(SEffect& e, const PHLMONITOR& MON, double elapsedMs, double durationMs, float env) {
+    if (!MON || !e.target || !m_shader)
+        return;
+
+    // progress keeps climbing past 1 while the burst is held; the shader clamps
+    // it, so the visuals sit pinned at maximum collapse and keep re-tearing
+    const float T = elapsedMs / durationMs;
+
+    const auto  SNAP = e.snapshot ? e.snapshot->getTexture() : nullptr;
+
+    buildUV(e, MON, SNAP);
+
+    const CHyprColor BG = colorOr(g_backdropColor, CHyprColor{0.F, 0.F, 0.F, 1.F});
+    const CHyprColor F1 = colorOr(g_fringe1, CHyprColor{1.F, 0.F, 0.6F, 1.F});
+    const CHyprColor F2 = colorOr(g_fringe2, CHyprColor{0.F, 0.9F, 1.F, 1.F});
+
+    const Vector2D   FBSIZE = e.target->m_size;
+    Vector2D         prevViewport = g_pHyprRenderer->renderData().fbSize;
+    if (prevViewport.x < 1.0 || prevViewport.y < 1.0)
+        prevViewport = MON->m_pixelSize;
+
+    auto guard = g_pHyprRenderer->bindTempFB(e.target);
+
+    g_pHyprRenderer->setViewport(0, 0, FBSIZE.x, FBSIZE.y);
+    g_pHyprRenderer->disableScissor();
+    g_pHyprRenderer->blend(false);
+
+    // never raw glUseProgram: CHyprOpenGLImpl caches the bound program to skip
+    // redundant binds, and desyncing that cache breaks the next Hyprland draw.
+    // going through useShader keeps the cache truthful, so no restore is needed.
+    Render::GL::g_pHyprOpenGL->useShader(m_shader);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, SNAP ? SNAP->m_texID : 0);
+
+    glUniform1f(m_uni.hasTex, SNAP ? 1.F : 0.F);
+    glUniform2f(m_uni.uvOffset, e.uvOffset.x, e.uvOffset.y);
+    glUniformMatrix2fv(m_uni.uvXf, 1, GL_FALSE, e.uvXf);
+    glUniform2f(m_uni.resolution, FBSIZE.x, FBSIZE.y);
+    glUniform1f(m_uni.progress, T);
+    glUniform1f(m_uni.env, env);
+    glUniform1f(m_uni.seed, e.seed);
+    glUniform1f(m_uni.strength, std::clamp(static_cast<float>(g_strength->value()), 0.F, 5.F));
+    glUniform1f(m_uni.aberration, unit(g_aberration));
+    glUniform1f(m_uni.blocks, unit(g_blocks));
+    glUniform1f(m_uni.noiseAmount, unit(g_noise));
+    glUniform1f(m_uni.scanlines, unit(g_scanlines));
+    glUniform1f(m_uni.roll, unit(g_roll));
+    glUniform1f(m_uni.melt, unit(g_melt));
+    glUniform1f(m_uni.tear, unit(g_tear));
+    glUniform1f(m_uni.tearSpeed, std::max(0.F, static_cast<float>(g_tearSpeed->value())));
+    glUniform1f(m_uni.ghost, unit(g_ghost));
+    glUniform1f(m_uni.vignette, unit(g_vignette));
+    glUniform1f(m_uni.backdropAlpha, unit(g_backdropAlpha));
+    glUniform3f(m_uni.colBackdrop, BG.r, BG.g, BG.b);
+    glUniform3f(m_uni.colFringe1, F1.r, F1.g, F1.b);
+    glUniform3f(m_uni.colFringe2, F2.r, F2.g, F2.b);
+
+    glBindVertexArray(m_vao);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    glBindVertexArray(0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    g_pHyprRenderer->setViewport(0, 0, prevViewport.x, prevViewport.y);
+    g_pHyprRenderer->blend(true);
+    // `guard` rebinds the previous framebuffer here; the render pass re-scissors
+    // per element, so the disabled scissor does not need restoring
+}
+
+void CGlitchCloseManager::drawEffect(const SEffect& e, const PHLMONITOR& mon, double elapsedMs, double durationMs, float env) {
+    const auto TEX = e.target ? e.target->getTexture() : nullptr;
+    if (!TEX)
+        return;
+
+    // the fade envelope is already baked into the shader's output alpha, so this
+    // is a straight composite of what was just rendered
+    CTexPassElement::SRenderData d;
+    d.tex          = TEX;
+    d.box          = CBox{e.localBox}.scale(mon->m_scale).round();
+    d.a            = 1.F;
+    // NOT flipEndFrame: that flag makes Hyprland compose the monitor transform's
+    // inverse into the texture's own transform, which is right for a snapshot FB
+    // (rendered in panel orientation) but wrong here -- the shader authors this
+    // texture in logical orientation, so on a rotated monitor the flag rotated
+    // the finished effect a further 90 degrees inside its box. It is a no-op on
+    // an untransformed monitor, so dropping it changes nothing there.
+    d.damage       = CRegion{d.box};
+    g_pHyprRenderer->m_renderPass.add(makeUnique<CTexPassElement>(d));
+
+    drawCaption(e.localBox, mon, elapsedMs, durationMs, env);
+}
+
+// Cached glyph texture. renderText needs a live GL context, so this is only
+// ever reached from inside a frame. Rendered at 2x the configured pt and drawn
+// at half size, so it stays sharp when scaled up on a hidpi monitor.
+SP<Render::ITexture> CGlitchCloseManager::textTexture() {
+    if (m_textTex)
+        return m_textTex;
+    if (g_text->value().empty())
+        return nullptr;
+
+    const CHyprColor COL = colorOr(g_textColor, CHyprColor{1.F, 1.F, 1.F, 1.F});
+    m_textTex = g_pHyprRenderer->renderText(g_text->value(), COL, g_textSize->value() * 2, false, g_font->value(), 0, 700);
+    return m_textTex;
+}
+
+// A plate and a caption drawn OVER the shader output -- deliberately not fed
+// through the glitch, so it stays legible while everything behind it tears.
+void CGlitchCloseManager::drawCaption(const CBox& box, const PHLMONITOR& mon, double elapsedMs, double durationMs, float env) {
+    if (g_text->value().empty())
+        return;
+
+    // Burst and hold, never the fade: a caption dissolving over whatever the
+    // overlay is uncovering reads as a bug, where a dissolving glitch still
+    // reads as an effect. env is 1 for the whole burst and hold, 0 by the end
+    // of the fade.
+    if (env < 1.F)
+        return;
+    if (static_cast<float>(elapsedMs / durationMs) < std::clamp(g_textAt->value(), 0.F, 1.F))
+        return;
+
+    const auto BLINK = std::max<int64_t>(0, g_textBlink->value());
+    if (BLINK > 0 && static_cast<int>(elapsedMs / BLINK) % 2 != 0)
+        return;
+
+    const auto TEX = textTexture();
+    if (!TEX)
+        return;
+
+    auto     scaled = [&](CBox b) { return b.scale(mon->m_scale).round(); };
+
+    Vector2D ts = TEX->m_size / 2.0; // rendered at 2x, see textTexture()
+    const double FIT = std::min({1.0, box.w * 0.8 / std::max(ts.x, 1.0), box.h * 0.4 / std::max(ts.y, 1.0)});
+    ts               = ts * FIT;
+
+    const CBox   TB{box.x + (box.w - ts.x) / 2.0, box.y + (box.h - ts.y) / 2.0, ts.x, ts.y};
+    const double PAD = static_cast<double>(std::max<int64_t>(0, g_textPadding->value()));
+    const CBox   BG{TB.x - PAD, TB.y - PAD, TB.w + PAD * 2, TB.h + PAD * 2};
+
+    const float BGA = unit(g_textBgAlpha) * env;
+    if (BGA > 0.F) {
+        const CHyprColor C = colorOr(g_textBgColor, CHyprColor{0.75F, 0.05F, 0.07F, 1.F});
+        CRectPassElement::SRectData rd;
+        rd.box   = scaled(BG);
+        rd.color = CHyprColor{static_cast<float>(C.r), static_cast<float>(C.g), static_cast<float>(C.b), BGA};
+        rd.round = static_cast<int>(std::max<int64_t>(0, g_textBgRound->value()));
+        g_pHyprRenderer->m_renderPass.add(makeUnique<CRectPassElement>(rd));
+    }
+
+    const float TA = unit(g_textAlpha) * env;
+    if (TA > 0.F) {
+        CTexPassElement::SRenderData td;
+        td.tex    = TEX;
+        td.box    = scaled(TB);
+        td.a      = TA;
+        td.damage = CRegion{td.box};
+        g_pHyprRenderer->m_renderPass.add(makeUnique<CTexPassElement>(td));
+    }
+}

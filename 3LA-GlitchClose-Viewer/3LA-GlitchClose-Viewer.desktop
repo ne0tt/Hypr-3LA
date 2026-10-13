@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=3LA-GlitchClose Tuner
+Comment=Live WebGL tuner for the 3LA-GlitchClose window-close shader
+Exec=/home/sispx/git/Hypr-3LA/3LA-GlitchClose-Viewer/run.sh
+Icon=applications-graphics
+Terminal=false
+Categories=Development;Graphics;
+StartupNotify=true
