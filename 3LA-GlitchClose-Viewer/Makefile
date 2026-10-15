@@ -16,8 +16,9 @@ open: generated.js
 
 # add to the app launcher (quickshell:toggleAppLauncher etc.)
 install-desktop:
-	install -Dm644 3LA-GlitchClose-Viewer.desktop \
-		$(HOME)/.local/share/applications/3LA-GlitchClose-Viewer.desktop
+	mkdir -p $(HOME)/.local/share/applications
+	sed 's|@VIEWER_DIR@|$(CURDIR)|' 3LA-GlitchClose-Viewer.desktop \
+		> $(HOME)/.local/share/applications/3LA-GlitchClose-Viewer.desktop
 	update-desktop-database $(HOME)/.local/share/applications 2>/dev/null || true
 	@echo "installed; search for \"3LA-GlitchClose Tuner\""
 

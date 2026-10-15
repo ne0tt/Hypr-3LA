@@ -39,6 +39,8 @@ inline SP<Config::Values::CStringValue> g_ignoreClass;
 inline SP<Config::Values::CStringValue> g_ignoreTitle;
 inline SP<Config::Values::CStringValue> g_titlebarIgnoreClass;
 inline SP<Config::Values::CStringValue> g_titlebarIgnoreTitle;
+inline SP<Config::Values::CStringValue> g_titlebarRequireTitleClass;
+inline SP<Config::Values::CStringValue> g_titlebarRequireTitle;
 inline SP<Config::Values::CStringValue> g_titleRules;
 inline SP<Config::Values::CIntValue>    g_frame;
 inline SP<Config::Values::CStringValue> g_frameIgnoreClass;

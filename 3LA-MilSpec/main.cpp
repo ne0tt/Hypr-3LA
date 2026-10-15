@@ -196,6 +196,15 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                                                                      Config::Values::SStringValueOptions{.refresh = REFRESH});
     g_titlebarIgnoreTitle = makeShared<Config::Values::CStringValue>("plugin:3la_milspec:titlebar.ignore_title", "regex of window titles that get no title bar (empty = none)", "",
                                                                      Config::Values::SStringValueOptions{.refresh = REFRESH});
+    // opt-in bar: matched classes only get a bar while their title matches
+    // titlebar.require_title (e.g. kitty only during an SSH session). Re-checked
+    // on every title change via the window.title listener.
+    g_titlebarRequireTitleClass = makeShared<Config::Values::CStringValue>(
+        "plugin:3la_milspec:titlebar.require_title_class", "regex of window classes that only get a title bar while their title matches titlebar.require_title (empty = none)", "",
+        Config::Values::SStringValueOptions{.refresh = REFRESH});
+    g_titlebarRequireTitle = makeShared<Config::Values::CStringValue>(
+        "plugin:3la_milspec:titlebar.require_title", "regex a titlebar.require_title_class window's title must match to get a bar (empty = never)", "",
+        Config::Values::SStringValueOptions{.refresh = REFRESH});
     // same format and matching as 3la_titlebars:title_rules
     g_titleRules = makeShared<Config::Values::CStringValue>(
         "plugin:3la_milspec:title_rules",
@@ -266,6 +275,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValueV2(PHANDLE, g_ignoreTitle);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_titlebarIgnoreClass);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_titlebarIgnoreTitle);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_titlebarRequireTitleClass);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_titlebarRequireTitle);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_titleRules);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_frame);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_frameIgnoreClass);

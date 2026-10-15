@@ -271,11 +271,16 @@ void CMilSpecDecoration::toggle() {
 // separate caches from hidden()'s: the two filters hold different patterns,
 // and sharing one cache would recompile on every alternate call
 bool CMilSpecDecoration::barShown() const {
-    static std::optional<std::regex> classRe, titleRe;
-    static std::string               classPattern, titlePattern;
+    static std::optional<std::regex> classRe, titleRe, reqClassRe, reqTitleRe;
+    static std::string               classPattern, titlePattern, reqClassPattern, reqTitlePattern;
 
     const auto PWINDOW = m_window.lock();
     if (!PWINDOW || g_titlebar->value() == 0 || m_toggledOff)
+        return false;
+
+    // opt-in classes: no bar unless the title matches (empty require_title = never)
+    if (matchesIgnorePattern(reqClassRe, reqClassPattern, g_titlebarRequireTitleClass->value(), PWINDOW->m_class) &&
+        !matchesIgnorePattern(reqTitleRe, reqTitlePattern, g_titlebarRequireTitle->value(), PWINDOW->m_title))
         return false;
 
     return !matchesIgnorePattern(classRe, classPattern, g_titlebarIgnoreClass->value(), PWINDOW->m_class) &&

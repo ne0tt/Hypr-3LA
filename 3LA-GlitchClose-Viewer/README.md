@@ -22,7 +22,7 @@ For a keybind, point it at `run.sh`:
 
 ```lua
 hl.bind(mainMod .. " + SHIFT + G",
-    hl.dsp.exec_cmd(os.getenv("HOME") .. "/git/Hypr-3LA/3LA-GlitchClose-Viewer/run.sh"),
+    hl.dsp.exec_cmd("/path/to/Hypr-3LA/3LA-GlitchClose-Viewer/run.sh"),
     { description = "GlitchClose shader tuner" })
 ```
 
@@ -101,5 +101,5 @@ Size, colour, padding, corner radius and timing are faithful enough to tune with
 - **matugen** / **stock** preset the three colours
 - **copy Lua** emits a `pcall(hl.config, ...)` block ready to paste
 
-The bundled background is a screenshot of this desktop. Replace
+The bundled background is a sample desktop screenshot. Replace
 `background-src.jpg` and re-run `make` to change the default.
