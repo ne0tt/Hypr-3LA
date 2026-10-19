@@ -8,6 +8,11 @@
 
 inline HANDLE                           PHANDLE = nullptr;
 
+// true while the hook on CSurfacePassElement::visibleRegion is installed: the
+// client's corners past a chamfer are then clipped from its surface, and the
+// frame texture keeps the corner covers inside the frame polygon
+inline bool                             g_cornerCut = false;
+
 inline SP<Config::Values::CIntValue>    g_enabled;
 inline SP<Config::Values::CIntValue>    g_offset;
 inline SP<Config::Values::CIntValue>    g_thickness;
@@ -47,6 +52,7 @@ inline SP<Config::Values::CStringValue> g_frameIgnoreClass;
 inline SP<Config::Values::CStringValue> g_frameIgnoreTitle;
 inline SP<Config::Values::CStringValue> g_offsetTopFlushClass;
 
+inline SP<Config::Values::CIntValue>    g_nativeShadow;
 inline SP<Config::Values::CIntValue>    g_shadow;
 inline SP<Config::Values::CIntValue>    g_shadowRange;
 inline SP<Config::Values::CIntValue>    g_shadowRenderPower;

@@ -78,12 +78,14 @@ hl.config({ plugin = { ["3la_milspec"] = {
                             -- under the title bar and stroke. 0 = transparent;
                             -- the color's own alpha applies, e.g. "rgba(0a141c99)"
 
-    corners = 1,               -- paint over the window's own corners so the app
-                               -- looks cut like the frame: bottom-right always,
-                               -- top-left only when the window has no title bar
-                               -- (0 = off). A painted cover, not real transparency.
-    ["corners.size"] = -1,     -- -1 = auto: even gap matching the sides;
-                               -- >= 0 = leg length (px), 0 = no cover
+    corners = 1,               -- cut the window's own corners like the frame:
+                               -- bottom-right always, top-left only when the
+                               -- window has no title bar (0 = off). The part past
+                               -- the stroke is clipped from the client; inside
+                               -- the frame a painted cover fills the gap.
+    ["corners.size"] = -1,     -- painted cover inside the frame. -1 = auto: a
+                               -- band `offset` wide along the inside of the
+                               -- chamfer; >= 0 = leg length (px), 0 = no cover
     ["corners.col"] = 0,       -- cover color. 0 = follow col.background; if that is
                                -- 0 too, an opaque near-black 0xff0a0f14
 
@@ -140,6 +142,9 @@ hl.config({ plugin = { ["3la_milspec"] = {
     ["frame.ignore_title"] = "",    -- regex of window titles that get no frame
                                     -- stroke (empty = none)
 
+    native_shadow = 0,              -- 0 = hide Hyprland's decoration:shadow on framed
+                                    -- windows (its square corner pokes past the chamfer);
+                                    -- 1 = leave it alone
     shadow = 1,                     -- drop shadow following the frame (0 = off)
     ["shadow.range"] = 30,          -- shadow size (px), as decoration:shadow:range
     ["shadow.render_power"] = 4,    -- falloff power 1-4 (higher = tighter)
@@ -219,8 +224,15 @@ shape) and the same geometry order (grow by `range`, scale about the centre,
 then offset). It is measured from the frame's **outer edge**, so it follows
 both 45° cuts and the title bar band.
 
-- Keep `decoration:shadow:enabled = false`, or both shadows are drawn.
+- Hyprland's own `decoration:shadow` is hidden on framed windows by default
+  (`native_shadow = 0`): the plugin sets the window's `noshadow` property at
+  the `setprop` priority, as `hyprctl setprop noshadow 1` would, and lifts it
+  again when the frame is hidden or the plugin unloads. Unframed windows keep
+  it. `native_shadow = 1` leaves it alone, and then both shadows are drawn.
 - Only shows **outside** the frame, never in the gap between frame and window.
+- Drawn **above** the window (unlike Hyprland's shadow, which sits under it),
+  so it runs along the whole chamfer: through the corners clipped past the cut
+  and, without the clip, over the painted covers there.
 - `frame = 0` / `frame.ignore_*` hide only the stroke; the shadow still traces
   the frame shape. `enabled = 0` or `ignore_class` / `ignore_title` also
   remove the shadow.
@@ -251,31 +263,52 @@ hyprctl eval 'hl.config({ plugin = { ["3la_milspec"] = { ["col.background"] = 0 
 ## Window corner covers
 
 The frame is chamfered but the app inside is still a square window.
-`corners = 1` (the default) paints a 45° triangle **over** the window's own
-corner so the app looks cut too:
+`corners = 1` (the default) cuts the window's own corner like the frame:
 
-- **Bottom-right:** always covered.
-- **Top-left:** covered only when the window shows **no** MilSpec title bar.
-  With the bar shown, the bar carries the top-left cut.
+- **Bottom-right:** always cut.
+- **Top-left:** cut wherever the chamfer reaches the window. With a MilSpec
+  title bar the bar carries the corner and the window sits below its band, so
+  the window itself is only cut by a chamfer deeper than that band.
 
-It is a **painted cover, not a transparency cut**: whatever is behind the
-window does not show through. It reads as a cut when its colour matches what
-surrounds it, which is why it follows `col.background` by default.
+Two things happen at such a corner:
+
+- **Past the frame's outer edge the client is clipped.** A client buffer is
+  rectangular, so wherever the chamfer is deeper than the window's insets the
+  app's corner would poke past the cut (7 px on an `offset.top_flush_class`
+  window at offset 5 / thickness 1 / chamfer 14, 2 px otherwise). The plugin
+  hooks `CSurfacePassElement::visibleRegion`, the clip Hyprland scissors every
+  window surface with, and `opaqueRegion`, which the render pass culls
+  everything underneath with, and subtracts that triangle from both, so
+  nothing of the app is drawn there and the wallpaper and the
+  [drop shadow](#drop-shadow) show through. 3LA-Tint follows the same clip.
+  Popups are never clipped. A core `general:border_size > 0` is not clipped
+  either; keep it 0 with chamfers. If a symbol is missing on a future Hyprland
+  the plugin notifies once at load and falls back to the cover below painting
+  over the corner.
+- **Inside the frame a 45° triangle is painted over the window**
+  (`corners.size`): by default a band `offset` wide along the inside of the
+  stroke's diagonal, so the gap between the stroke and the app is the same
+  along the chamfer as along the straight edges. It is a painted cover, not
+  transparency: it reads as a cut when its colour matches the fill around it,
+  which is why it follows `col.background` by default. `corners.size = 0`
+  drops it and the app runs right up to the chamfer.
 
 - Triangle legs are measured on the window **plus** its border, with only the
   diagonal antialiased. Covers are clamped to half the window's shorter side.
 - `corners.size = -1` (default) is **auto**: the window's cut is placed
-  parallel to the frame's inner diagonal at the same gap as the straight
-  edges. For stroke thickness T, chamfer C and gaps gA / gB on the two edges
-  meeting at the corner, the leg is
-  `s = C + (T + d)·√2 − (T + gA) − (T + gB)` with `d = min(gA, gB)`
-  (thickness 1, offset 5, chamfer 10 → 6.5 px). If s ≤ 0 no cover is drawn.
+  parallel to the frame's inner diagonal, `offset` px inside it, so the
+  diagonal gap equals the straight ones (also on `offset.top_flush_class`
+  windows, whose top gap is 0). For stroke thickness T, chamfer C, offset o
+  and the actual gaps gA / gB on the two edges meeting at the corner, the leg
+  is `s = C + (T + o)·√2 − (T + gA) − (T + gB)`
+  (thickness 1, offset 5, chamfer 14, both gaps 5 → 10.5 px). If s ≤ 0 no
+  cover is drawn.
 - Colour: `corners.col`, else `col.background`, else opaque `0xff0a0f14`.
   Always drawn fully opaque.
 - Rounded windows: with a large `rounding` a sliver of the arc can show past
   the diagonal.
 - Skipped on fullscreen windows and windows with no frame. `frame = 0` keeps
-  the covers.
+  the covers and the clip.
 
 ```sh
 hyprctl eval 'hl.config({ plugin = { ["3la_milspec"] = { ["corners.size"] = 20, ["corners.col"] = "rgba(0a141cff)" } } })'
@@ -421,6 +454,7 @@ pcall(hl.config, {
             ["text.size"] = 16,
             ["text.font"] = "Bebas Neue",
             title_rules = title_rules,
+            native_shadow = 0,
             shadow = 1,
             ["shadow.range"] = 20,
             ["col.shadow.active"] = "rgba(000000ee)",

@@ -1,15 +1,25 @@
 #include "MilSpecDecoration.hpp"
 #include "globals.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <stdexcept>
+#include <string>
 #include <unordered_map>
+#include <unordered_set>
 
+#include <hyprland/src/desktop/rule/windowRule/WindowRuleApplicator.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
+#include <hyprland/src/desktop/types/OverridableVar.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/event/EventBus.hpp>
+#include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
+#include <hyprland/src/output/Monitor.hpp>
+#include <hyprland/src/plugins/HookSystem.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/render/decorations/DecorationPositioner.hpp>
+#include <hyprland/src/render/pass/SurfacePassElement.hpp>
 #include <hyprland/src/version.h>
 
 static std::unordered_map<Desktop::View::CWindow*, CMilSpecDecoration*> g_decos;
@@ -21,6 +31,199 @@ CMilSpecDecoration* milspecFrameFor(const PHLWINDOW& w) {
 
     const auto IT = g_decos.find(w.get());
     return IT != g_decos.end() ? IT->second : nullptr;
+}
+
+// ---------------------------------------------------------------------------
+// real corner cut: clip the client's surface past the chamfer
+// ---------------------------------------------------------------------------
+// A client buffer is rectangular, so wherever the cut is deeper than the
+// window's insets its corner pokes past the chamfer line. Hyprland draws a
+// window surface through CSurfacePassElement: visibleRegion() is the clip the
+// element renderer scissors the texture with, and opaqueRegion() is what the
+// render pass culls everything underneath (wallpaper, shadows) with. Hooking
+// both lets the plugin subtract the two corner triangles, so nothing of the
+// client is drawn there and whatever lies beneath shows through -- the
+// frame's covers then only have to fill inside the frame. The hooks are
+// optional: if a symbol is not found the covers paint over the corner as
+// before.
+static CFunctionHook* g_visibleRegionHook = nullptr;
+static CFunctionHook* g_opaqueRegionHook  = nullptr;
+using visibleRegionFn                     = CRegion (*)(CSurfacePassElement*, bool&);
+using opaqueRegionFn                      = CRegion (*)(CSurfacePassElement*);
+
+// rows of pixels of window box `wb` whose centre lies past a 45 deg cut of
+// `legs` px at the top-left / bottom-right corner. Pixel (i, j) from the
+// corner is past the line when i + j + 1 < legs, so with integer legs the
+// kept boundary pixels are exactly the ones the stroke's antialiasing
+// straddles.
+static void chamferRows(CRegion& out, const CBox& wb, double legsTL, double legsBR) {
+    for (int j = 0; j + 1 < legsTL; ++j) {
+        const int n = static_cast<int>(std::ceil(legsTL - j - 1));
+        if (n <= 0)
+            break;
+        out.add(wb.x, wb.y + j, n, 1);
+    }
+    for (int j = 0; j + 1 < legsBR; ++j) {
+        const int n = static_cast<int>(std::ceil(legsBR - j - 1));
+        if (n <= 0)
+            break;
+        out.add(wb.x + wb.w - n, wb.y + wb.h - 1 - j, n, 1);
+    }
+}
+
+// legs (layout px) of this surface's window past the chamfer at each corner;
+// false when nothing is to be cut. Popups keep their shape; only the window
+// and its subsurfaces are cut.
+static bool cornerCutLegs(const CSurfacePassElement::SRenderData& D, double& tl, double& br) {
+    if (!D.pWindow || D.popup)
+        return false;
+
+    const auto* F = milspecFrameFor(D.pWindow);
+    if (!F || F->hidden() || g_corners->value() == 0 || g_chamfer->value() <= 0 || Fullscreen::controller()->isFullscreen(D.pWindow))
+        return false;
+
+    // the top inset includes a title bar's band, so with a bar the top-left
+    // only cuts when the chamfer reaches below the bar
+    const auto   INS = F->insets(D.pWindow);
+    const CBox   FB  = F->frameBox(D.pWindow);
+    const double C   = std::clamp<double>(g_chamfer->value(), 0.0, std::min(FB.w, FB.h) / 2.0);
+    tl               = C - INS.l - INS.t;
+    br               = C - INS.r - INS.b;
+    return tl > 0 || br > 0;
+}
+
+// the cut for this surface in monitor-local px at `scale` (1 = layout px).
+// pos / w / h are the window's for every non-popup surface (subsurfaces only
+// change localPos), so the same cut applies to all of them; the box is scaled
+// and rounded like the element renderer builds it.
+static CRegion cornerCut(const CSurfacePassElement::SRenderData& D, const PHLMONITOR& PMONITOR, double scale, double tl, double br) {
+    CBox wb{D.pos.x - PMONITOR->m_position.x, D.pos.y - PMONITOR->m_position.y, D.w, D.h};
+    wb.scale(scale).round();
+
+    CRegion cut;
+    chamferRows(cut, wb, tl * scale, br * scale);
+    return cut;
+}
+
+// same ABI as the members: hidden return slot, `this`, then the arguments
+static CRegion hkVisibleRegion(CSurfacePassElement* self, bool& cancel) {
+    CRegion r = reinterpret_cast<visibleRegionFn>(g_visibleRegionHook->m_original)(self, cancel);
+    if (cancel)
+        return r;
+
+    double tl = 0, br = 0;
+    if (!cornerCutLegs(self->m_data, tl, br))
+        return r;
+
+    const auto PMONITOR = self->m_data.pMonitor.lock();
+    if (!PMONITOR)
+        return r;
+
+    const double SCALE = PMONITOR->m_scale;
+
+    // most clients never set a hyprland_surface_v1 visible region, so the
+    // original returns an empty region -- which the renderer takes as "no
+    // clip" and draws the whole quad. Start from the quad itself then.
+    if (r.empty()) {
+        CBox tb = self->getTexBox();
+        tb.scale(SCALE).round();
+        r = CRegion{tb};
+    }
+
+    r.subtract(cornerCut(self->m_data, PMONITOR, SCALE, tl, br));
+    return r;
+}
+
+static CRegion hkOpaqueRegion(CSurfacePassElement* self) {
+    CRegion r = reinterpret_cast<opaqueRegionFn>(g_opaqueRegionHook->m_original)(self);
+    if (r.empty())
+        return r;
+
+    double tl = 0, br = 0;
+    if (!cornerCutLegs(self->m_data, tl, br))
+        return r;
+
+    const auto PMONITOR = self->m_data.pMonitor.lock();
+    if (!PMONITOR)
+        return r;
+
+    // layout px: the render pass scales and rounds each rect itself. One
+    // extra px of leg so that, after its rounding, the area left uncovered
+    // beneath the window is never smaller than the area the surface skips.
+    r.subtract(cornerCut(self->m_data, PMONITOR, 1.0, tl + 1, br + 1));
+    return r;
+}
+
+static CFunctionHook* hookMember(const std::string& demangled, void* replacement) {
+    for (const auto& m : HyprlandAPI::findFunctionsByName(PHANDLE, demangled.substr(demangled.rfind("::") + 2))) {
+        if (!m.demangled.contains(demangled))
+            continue;
+
+        auto* hook = HyprlandAPI::createFunctionHook(PHANDLE, m.address, replacement);
+        if (hook && hook->hook())
+            return hook;
+        if (hook)
+            HyprlandAPI::removeFunctionHook(PHANDLE, hook);
+        return nullptr;
+    }
+    return nullptr;
+}
+
+static void removeCornerCut() {
+    for (auto* hook : {&g_visibleRegionHook, &g_opaqueRegionHook}) {
+        if (*hook)
+            HyprlandAPI::removeFunctionHook(PHANDLE, *hook);
+        *hook = nullptr;
+    }
+    g_cornerCut = false;
+
+    // the clipped corners are inside each window's box: repaint them
+    for (const auto& w : Desktop::windowState()->windows()) {
+        if (Desktop::View::validMapped(w))
+            g_pHyprRenderer->damageWindow(w);
+    }
+}
+
+static void installCornerCut() {
+    g_visibleRegionHook = hookMember("CSurfacePassElement::visibleRegion", reinterpret_cast<void*>(&hkVisibleRegion));
+    g_opaqueRegionHook  = hookMember("CSurfacePassElement::opaqueRegion", reinterpret_cast<void*>(&hkOpaqueRegion));
+    g_cornerCut         = g_visibleRegionHook && g_opaqueRegionHook;
+
+    if (!g_cornerCut) {
+        removeCornerCut();
+        HyprlandAPI::addNotification(PHANDLE, "[3LA-MilSpec] corner cut unavailable on this Hyprland, falling back to painted corner covers", CHyprColor{1.F, 0.6F, 0.2F, 1.F}, 6000);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Hyprland's own drop shadow on framed windows
+// ---------------------------------------------------------------------------
+// decoration:shadow hugs the window's rectangle, so at a chamfer its square
+// corner sticks out past the cut while the plugin's shadow follows the frame.
+// With native_shadow = 0 a framed window gets the `noshadow` property at the
+// setprop priority (what `hyprctl setprop noshadow 1` sets), which outlives
+// window-rule re-application and is lifted again when the frame goes or the
+// plugin unloads. Only windows this plugin flagged are ever un-flagged.
+static std::unordered_set<Desktop::View::CWindow*> g_nativeShadowHidden;
+
+static void syncNativeShadow(const PHLWINDOW& w) {
+    if (!w || !w->m_ruleApplicator)
+        return;
+
+    const auto* F    = milspecFrameFor(w);
+    const bool  HIDE = F && !F->hidden() && g_nativeShadow->value() == 0;
+    const bool  WAS  = g_nativeShadowHidden.contains(w.get());
+    if (HIDE == WAS)
+        return;
+
+    if (HIDE) {
+        w->m_ruleApplicator->noShadow().set(true, Desktop::Types::PRIORITY_SET_PROP);
+        g_nativeShadowHidden.insert(w.get());
+    } else {
+        w->m_ruleApplicator->noShadow().unset(Desktop::Types::PRIORITY_SET_PROP);
+        g_nativeShadowHidden.erase(w.get());
+    }
+    g_pHyprRenderer->damageWindow(w);
 }
 
 static CHyprSignalListener                                              g_openListener;
@@ -58,6 +261,7 @@ static void repositionAll() {
     for (const auto& [win, deco] : g_decos) {
         g_pDecorationPositioner->repositionDeco(deco);
         deco->damageEntire();
+        syncNativeShadow(win->m_self.lock());
     }
     // shadow extents follow the frame's new geometry and the shadow options
     for (const auto& [win, shadow] : g_shadows)
@@ -76,6 +280,8 @@ static void repositionAndDamage(const PHLWINDOW& w) {
 
     if (const auto SIT = g_shadows.find(w.get()); SIT != g_shadows.end())
         g_pDecorationPositioner->repositionDeco(SIT->second);
+
+    syncNativeShadow(w);
 }
 
 static void addDeco(const PHLWINDOW& w) {
@@ -84,12 +290,18 @@ static void addDeco(const PHLWINDOW& w) {
 
     auto deco        = makeUnique<CMilSpecDecoration>(w);
     g_decos[w.get()] = deco.get();
-    HyprlandAPI::addWindowDecoration(PHANDLE, w, std::move(deco));
 
+    // shadow first: both sit on the OVER layer, which renders in insertion
+    // order, and the frame's stroke must land on top so the shadow's
+    // antialiased cut-out edge never dims the chamfer's boundary pixels
     auto shadow        = makeUnique<CMilSpecShadowDecoration>(w);
     g_shadows[w.get()] = shadow.get();
     HyprlandAPI::addWindowDecoration(PHANDLE, w, std::move(shadow));
+
+    HyprlandAPI::addWindowDecoration(PHANDLE, w, std::move(deco));
     g_pHyprRenderer->damageWindow(w);
+
+    syncNativeShadow(w);
 }
 
 // toggles the title bar on the currently FOCUSED window only, independent of
@@ -141,11 +353,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     // window's rounded shape, never painted behind it
     g_colorBackground = makeShared<Config::Values::CColorValue>("plugin:3la_milspec:col.background", "fill between the frame and the window (0 = transparent)", 0,
                                                                 Config::Values::SColorValueOptions{.refresh = REFRESH});
-    // painted over the window's own chamfered corners (no real transparency
-    // cut): bottom-right always, top-left only when the window has no bar
-    g_corners     = makeShared<Config::Values::CIntValue>("plugin:3la_milspec:corners", "cover the window's own top-left (no title bar only) and bottom-right corners (0 = off)", 1,
+    // the window's own chamfered corners: clipped from the client past the
+    // frame's edge (see hkVisibleRegion), painted over inside it. Bottom-right
+    // always, top-left only when the window has no bar
+    g_corners     = makeShared<Config::Values::CIntValue>("plugin:3la_milspec:corners", "cut the window's own top-left (no title bar only) and bottom-right corners (0 = off)", 1,
                                                           Config::Values::SIntValueOptions{.min = 0, .max = 1, .refresh = REFRESH});
-    g_cornersSize = makeShared<Config::Values::CIntValue>("plugin:3la_milspec:corners.size", "leg length (px) of the corner covers (-1 = auto: even gap matching the sides)", -1,
+    g_cornersSize = makeShared<Config::Values::CIntValue>("plugin:3la_milspec:corners.size",
+                                                          "leg length (px) of the painted corner covers inside the frame (-1 = auto: a band `offset` wide along the inside of the chamfer)", -1,
                                                           Config::Values::SIntValueOptions{.min = -1, .refresh = REFRESH});
     g_colorCorners = makeShared<Config::Values::CColorValue>("plugin:3la_milspec:corners.col",
                                                              "corner cover color, always drawn opaque (0 = follow col.background, or 0xff0a0f14 if that is 0 too)", 0,
@@ -225,6 +439,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                                                                      "regex of window classes with no top gap when they have no title bar (empty = none)", "",
                                                                      Config::Values::SStringValueOptions{.refresh = REFRESH});
 
+    g_nativeShadow = makeShared<Config::Values::CIntValue>("plugin:3la_milspec:native_shadow",
+                                                            "keep Hyprland's decoration:shadow on framed windows (0 = hide it there via the window's noshadow property; its square corner would poke past the chamfer)", 0,
+                                                            Config::Values::SIntValueOptions{.min = 0, .max = 1, .refresh = REFRESH});
     g_shadow = makeShared<Config::Values::CIntValue>("plugin:3la_milspec:shadow", "drop shadow following the frame's outer edge (0 = off)", 1,
                                                       Config::Values::SIntValueOptions{.min = 0, .max = 1, .refresh = REFRESH});
     g_shadowRange = makeShared<Config::Values::CIntValue>("plugin:3la_milspec:shadow.range", "shadow size (px), like decoration:shadow:range", 30,
@@ -282,6 +499,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValueV2(PHANDLE, g_frameIgnoreClass);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_frameIgnoreTitle);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_offsetTopFlushClass);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_nativeShadow);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_shadow);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_shadowRange);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_shadowRenderPower);
@@ -312,6 +530,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             g_decos.erase(IT);
         }
         g_shadows.erase(w.get());
+        g_nativeShadowHidden.erase(w.get());
     });
     // offset/thickness/titlebar change the reserved space; repositionDeco
     // alone doesn't damage, so a colour-only change needs the damage too
@@ -327,6 +546,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
     g_lastActive = Desktop::focusState()->window();
 
+    // before the decorations: their first frame texture reads g_cornerCut
+    installCornerCut();
+
     for (const auto& w : Desktop::windowState()->windows()) {
         if (Desktop::View::validMapped(w))
             addDeco(w);
@@ -336,6 +558,17 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
+    // first: the hook's body looks frames up in g_decos
+    removeCornerCut();
+
+    for (const auto& w : Desktop::windowState()->windows()) {
+        if (w && w->m_ruleApplicator && g_nativeShadowHidden.contains(w.get())) {
+            w->m_ruleApplicator->noShadow().unset(Desktop::Types::PRIORITY_SET_PROP);
+            g_pHyprRenderer->damageWindow(w);
+        }
+    }
+    g_nativeShadowHidden.clear();
+
     g_openListener.reset();
     g_closeListener.reset();
     g_destroyListener.reset();
@@ -389,6 +622,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
     g_frameIgnoreClass.reset();
     g_frameIgnoreTitle.reset();
     g_offsetTopFlushClass.reset();
+    g_nativeShadow.reset();
     g_shadow.reset();
     g_shadowRange.reset();
     g_shadowRenderPower.reset();

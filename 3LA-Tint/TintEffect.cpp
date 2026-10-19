@@ -154,7 +154,12 @@ void CTintManager::onRenderStage(eRenderStage stage) {
         const auto& SURF  = s->m_data.surface;
         const bool  OPAQUE = SURF && CRegion{0, 0, SURF->m_current.size.x, SURF->m_current.size.y}.subtract(SURF->m_current.opaque).empty();
         const bool  ALPHA = !OPAQUE && TEX->m_type == Render::TEXTURE_RGBA && !TEX->m_opaque && TEX->m_transform == HYPRUTILS_TRANSFORM_NORMAL;
-        (s->m_data.popup ? popupBoxes : boxes).push_back({s->getTexBox(), ROUND ? static_cast<float>(s->m_data.rounding) : 0.F, s->m_data.roundingPower, ALPHA ? TEX : nullptr});
+        // same clip the renderer scissored this surface with (see STintBox)
+        bool    cancel = false;
+        CRegion clip   = s->visibleRegion(cancel);
+        if (cancel)
+            clip = {};
+        (s->m_data.popup ? popupBoxes : boxes).push_back({s->getTexBox(), ROUND ? static_cast<float>(s->m_data.rounding) : 0.F, s->m_data.roundingPower, ALPHA ? TEX : nullptr, std::move(clip)});
     }
 
     // an animated (transformed) window queues its surfaces into a redirected
@@ -297,6 +302,8 @@ void CTintManager::drawBoxes(const std::vector<STintBox>& boxes) {
         const CBox SCALED = CBox{B.box}.scale(MON->m_scale).round();
 
         CRegion    region = DAMAGE.copy().intersect(SCALED);
+        if (!B.clip.empty())
+            region.intersect(B.clip);
         if (region.empty())
             continue;
 

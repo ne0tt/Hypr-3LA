@@ -183,6 +183,11 @@ It is built to cost nothing when nothing changes:
   right after the window's own surfaces, before 3LA-MilSpec's covers and title
   bar, 3LA-Corners and 3LA-TitleBars, so a MilSpec corner cover keeps exactly
   the colour of the frame fill around it. Popups get their own tint pass.
+- **Only pixels the surface painted are tinted.** Each box is clipped to the
+  same region the renderer scissored that surface with, so where 3LA-MilSpec
+  cuts a window's corner past its chamfer (or a client sets a
+  `hyprland_surface_v1` visible region) the wallpaper and shadow showing
+  through are left alone.
 - Rounded window corners are respected (rounding and rounding power are
   passed to the shader).
 - A window mid-animation (open/close/move with a transform) is drawn into a

@@ -19,11 +19,40 @@ option that turns it off live without unloading it.
 | [3LA-TitleBars](3LA-TitleBars) | solid-colour title bar reserved above every window | [README](3LA-TitleBars/README.md) |
 | [3LA-Tint](3LA-Tint) | recolours the greys/blacks/whites of chosen windows toward a theme colour | [README](3LA-Tint/README.md) |
 
+## What changed (2026-10-19)
+
+**Chamfers are real cuts now.** 3LA-MilSpec used to paint an opaque triangle
+over the part of a window that stuck out past its 45° cut, which showed as a
+lighter corner against the shadowed wallpaper. It now hooks the two functions
+Hyprland clips and occludes every window surface with
+(`CSurfacePassElement::visibleRegion` / `opaqueRegion`) and subtracts the
+corner, so the client is simply not drawn there and whatever lies behind it
+shows through. Along with that:
+
+- `corners.size = -1` (auto) now paints an `offset`-wide band of
+  `col.background` inside the chamfer, so the gap along the diagonal matches
+  the straight edges, also on `offset.top_flush_class` windows; `0` drops it.
+- The plugin's drop shadow is drawn above the window and follows the whole
+  chamfer, through the cut corners.
+- New `native_shadow` option (default `0`): Hyprland's own rectangular
+  `decoration:shadow` is hidden on framed windows via the window's `noshadow`
+  property, since its square corner would poke past the cut. Unframed windows
+  keep it.
+- The top-left is cut under a MilSpec title bar too, when the chamfer reaches
+  below the bar's band.
+- If a Hyprland update removes those symbols the plugin notifies once and
+  falls back to the painted covers.
+
+**Tint follows the clip.** 3LA-Tint re-tinted each surface's full rectangle;
+it now clips every tint box to the region the renderer drew that surface
+with, so the cut corners and client-set `hyprland_surface_v1` visible regions
+stay untouched.
+
 ## Plugins
 
 ### 3LA-MilSpec
 
-[![3LA-MilSpec: chamfered frame with title bar](assets/milspec.png)](3LA-MilSpec/README.md)
+[![3LA-MilSpec: chamfered frame and title bar around a floating kitty running fastfetch](assets/milspec.png)](3LA-MilSpec/README.md)
 
 Wraps every window in a stroked frame with the **top-left and bottom-right
 corners cut at 45°** — a "mil-spec" HUD panel outline. Optionally reserves a
@@ -31,8 +60,11 @@ title bar *inside* the frame showing the window's title.
 
 - Per-side title-bar insets, active/inactive colours and opacity, and a
   per-window toggle (`3la_milspec:toggle`)
-- Background fill between frame and window, drop shadow that follows the
-  chamfers, and corner covers that make the app itself look cut
+- The app's own corners are really clipped past the cut (a hook on
+  Hyprland's surface clip), with an `offset`-wide band of fill inside the
+  chamfer so the gap stays even
+- Background fill between frame and window, and a drop shadow that follows
+  the chamfers and replaces Hyprland's rectangular one on framed windows
 - Per-window opt-outs for the whole frame, just the bar, just the stroke or
   just the shadow
 - Custom bar titles (`title_rules`), same format as 3LA-TitleBars
@@ -101,6 +133,8 @@ lightness. Saturated pixels — images, video,
 coloured UI — are left alone.
 
 - Windows chosen by class or title regex; covers subsurfaces and popups
+- Tints only what the surface painted, so 3LA-MilSpec's clipped corners and
+  client-set visible regions stay untouched
 - Smooth chroma-based falloff, so anti-aliased edges don't band
 - Damage-only rendering and memoised matching — near-zero cost when idle
 - Requires the GL renderer
@@ -131,6 +165,7 @@ fullscreen workspace, with some windows relabelled by `title_rules`:
 |---|---|
 | **Hyprland 0.56.2** | Matched on *commit hash*, not version string, so two 0.56.2 builds from different commits still mismatch — see [Rebuilding after a Hyprland update](#rebuilding-after-a-hyprland-update) |
 | **A GL renderer** | 3LA-GlitchClose and 3LA-Tint need raw GL calls; on a Vulkan backend they raise a notification and disable themselves. 3LA-Corners and 3LA-TitleBars are unaffected. 3LA-MilSpec only uses the renderer's texture API, but has only been tested on GL. |
+| **Function hooks** | 3LA-MilSpec's corner clip hooks two `CSurfacePassElement` methods by symbol name. If a Hyprland update renames them the plugin says so once at load and paints its corner covers instead; nothing else breaks. |
 
 Nothing else. The built `.so` links only the C++ runtime — every Hyprland and
 GL symbol is left undefined and resolves against the running compositor at
@@ -378,6 +413,7 @@ README.
 | MilSpec + TitleBars | works, but gives two title bars — pick one |
 | MilSpec + Corners | not recommended: Corners' top brackets collide with the frame's top edge |
 | Tint + any decoration | decorations drawn over the window stay untinted |
+| Tint + MilSpec | Tint stops at the chamfer: the clipped corners are never re-tinted |
 | GlitchClose + anything | independent |
 
 One `title_rules` string can drive both 3LA-TitleBars and 3LA-MilSpec, and one

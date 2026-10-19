@@ -499,11 +499,19 @@ SP<ITexture> CMilSpecDecoration::frameTexture(int w, int h, int thick, int chamf
     // stroke (the window's corner can poke past the frame's diagonal, and the
     // stroke must stay on top there). Legs sit on whole pixels, so only the
     // diagonal is antialiased. Painted over the window: a cover matching what
-    // is behind it reads as a cut, it is not real transparency.
+    // is behind it reads as a cut, it is not real transparency. With the
+    // corner cut hooked in (main.cpp) the part past the frame's outer edge is
+    // clipped from the client itself, so the cover stays inside the polygon
+    // and never paints over the wallpaper showing through there.
     if (cover.w > 0 && cover.h > 0 && (cover.tl > 0 || cover.br > 0) && coverCol.a > 0.F) {
         const double MAXLEG = std::min(cover.w, cover.h) / 2.0;
         const double STL = std::min(cover.tl, MAXLEG), SBR = std::min(cover.br, MAXLEG);
         const double L = cover.x, T = cover.y, R = cover.x + cover.w, B = cover.y + cover.h;
+        cairo_save(CR);
+        if (g_cornerCut) {
+            tracePath(0.0);
+            cairo_clip(CR);
+        }
         cairo_new_path(CR);
         if (STL > 0) {
             cairo_move_to(CR, L, T);
@@ -519,6 +527,7 @@ SP<ITexture> CMilSpecDecoration::frameTexture(int w, int h, int thick, int chamf
         }
         cairo_set_source_rgba(CR, coverCol.r, coverCol.g, coverCol.b, coverCol.a);
         cairo_fill(CR);
+        cairo_restore(CR);
     }
 
     if (bar.h > 0 && bar.right > bar.left && barCol.a > 0.F) {
@@ -676,8 +685,8 @@ void CMilSpecDecoration::draw(PHLMONITOR pMonitor, float const& a) {
         hole.radius           = ROUNDING > 0 ? std::max(0.0, ROUNDING + BORDER - BORDER * (std::numbers::sqrt2 - 1) * std::max(2.0 - POWER, 0.0)) * SCALE : 0.0;
     }
 
-    // the window's own corners. Top-left only without a bar: with one, the
-    // bar carries the top-left cut and the window's corner sits below it.
+    // the window's own corners. With a bar the top-left gap includes the bar
+    // band, so that cover only appears once the chamfer reaches below the bar.
     SCoverGeom cover;
     if (COVERON) {
         cover.x = static_cast<int>(WIN.x - box.x);
@@ -690,22 +699,25 @@ void CMilSpecDecoration::draw(PHLMONITOR pMonitor, float const& a) {
         if (SZ >= 0)
             tl = br = px(SZ);
         else {
-            // auto: put the window's cut parallel to the frame's at the same
-            // perpendicular gap as the tighter of the two straight edges
-            // meeting there. In texture px from that corner of the frame, the
-            // stroke's inner diagonal is x + y = C + T*sqrt2 and the window's
-            // corner sits at (T + gA, T + gB), so the leg along each edge is
-            //   s = C + (T + min(gA, gB)) * sqrt2 - (T + gA) - (T + gB)
-            // (gA == gB == g gives C - (2 - sqrt2) * (T + g)). Measured from
-            // the real geometry: topExtra and the stroke-hidden case included.
+            // auto: a band of the cover colour `offset` wide along the inside
+            // of the stroke's diagonal, so the diagonal gap equals the one
+            // along the straight edges (also on top_flush windows, whose top
+            // gap is 0). In texture px from that corner of the frame, the
+            // stroke's inner diagonal is x + y = C + T*sqrt2, the band's inner
+            // edge x + y = C + (T + offset)*sqrt2, and the window's corner sits
+            // at (T + gA, T + gB), so the leg along each edge is
+            //   s = C + (T + offset) * sqrt2 - (T + gA) - (T + gB)
+            // Measured from the real geometry: topExtra and the stroke-hidden
+            // case included.
             const double C    = std::clamp<double>(CHAMFER, 0.0, std::min(W, H) / 2.0);
-            const auto   leg  = [&](double gA, double gB) { return C + (THICK + std::min(gA, gB)) * std::numbers::sqrt2 - (THICK + gA) - (THICK + gB); };
+            const double OFF  = px(std::max<Config::INTEGER>(g_offset->value(), 0));
+            const auto   leg  = [&](double gA, double gB) { return C + (THICK + OFF) * std::numbers::sqrt2 - (THICK + gA) - (THICK + gB); };
             const double GL   = cover.x - THICK, GT = cover.y - THICK;
             const double GR   = W - (cover.x + cover.w) - THICK, GB = H - (cover.y + cover.h) - THICK;
             tl                = leg(GL, GT);
             br                = leg(GR, GB);
         }
-        cover.tl = BARON ? 0.0 : std::max(0.0, tl);
+        cover.tl = std::max(0.0, tl);
         cover.br = std::max(0.0, br);
     }
 
@@ -1072,7 +1084,15 @@ void CMilSpecShadowDecoration::damageEntire() {
 }
 
 eDecorationLayer CMilSpecShadowDecoration::getDecorationLayer() {
-    return DECORATION_LAYER_BOTTOM;
+    // OVER, not BOTTOM like Hyprland's own shadow: the cut-out keeps it off
+    // everything inside the frame, so the only window pixels it can reach are
+    // the corners past a chamfer -- clipped from the client (main.cpp) or,
+    // without the clip, painted over by the covers. Drawn above them the
+    // shadow runs along the whole chamfer instead of stopping at the window's
+    // rectangle. Added before the frame (main.cpp), so the stroke stays on
+    // top of the shadow's antialiased cut-out edge. Without the clip, the
+    // covers outside the stroke still hide the shadow under them.
+    return DECORATION_LAYER_OVER;
 }
 
 uint64_t CMilSpecShadowDecoration::getDecorationFlags() {

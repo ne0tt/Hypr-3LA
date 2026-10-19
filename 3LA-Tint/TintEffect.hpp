@@ -25,6 +25,11 @@ struct STintBox {
     float roundingPower = 2.F;
     // set only for sampleable RGBA surfaces; keeps the buffer alive until drawn
     SP<Render::ITexture> alphaTex;
+    // the clip the surface itself was drawn with (monitor px), empty = all of
+    // `box`. Non-empty when the client set a hyprland_surface_v1 visible
+    // region or 3LA-MilSpec cut the window's corners past its chamfer: the
+    // tint then stays off the pixels the surface never painted.
+    CRegion clip;
 };
 
 // Tints the pixels of a matched window in place: at RENDER_POST_WINDOW the
