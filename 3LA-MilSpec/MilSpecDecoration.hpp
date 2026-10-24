@@ -160,6 +160,7 @@ class CMilSpecShadowDecoration : public IHyprWindowDecoration {
         int        frameX = 0, frameY = 0; // frame box, relative to the full box
         int        frameW = 0, frameH = 0;
         int        chamfer = 0, range = 0, power = 0;
+        int        inset = 0; // cut-out pulled in by this much: under the stroke
         bool       sharp = false;
         CHyprColor color;
         bool       operator==(const SKey&) const = default;

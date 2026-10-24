@@ -230,6 +230,12 @@ both 45° cuts and the title bar band.
   again when the frame is hidden or the plugin unloads. Unframed windows keep
   it. `native_shadow = 1` leaves it alone, and then both shadows are drawn.
 - Only shows **outside** the frame, never in the gap between frame and window.
+  Its cut-out sits on the stroke's **inner** edge, so it runs on under the
+  stroke the way Hyprland's shadow runs under its border. Cutting at the
+  outer edge left a light seam between stroke and shadow along the 45° cuts,
+  where both antialiased edges let the background through. With the stroke
+  hidden (`frame = 0`, `frame.ignore_*`, a transparent colour) it is cut at
+  the outer edge as before. A translucent stroke shows the shadow through it.
 - Drawn **above** the window (unlike Hyprland's shadow, which sits under it),
   so it runs along the whole chamfer: through the corners clipped past the cut
   and, without the clip, over the painted covers there.

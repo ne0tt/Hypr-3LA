@@ -908,11 +908,15 @@ static double segDist(double px, double py, double ax, double ay, double bx, dou
 // shadow alpha (0..1, before the color's own alpha) at pixel centre (x, y),
 // in full-box px
 static double shadowAlphaAt(double x, double y, const CMilSpecShadowDecoration::SKey& k) {
-    // cut-out: inside distance to the frame polygon, antialiased over 1 px
+    // cut-out: inside distance to the frame polygon, antialiased over 1 px.
+    // Pulled in by `inset` (the stroke's width) so the shadow runs on under
+    // the stroke, as Hyprland's runs under its border: cut at the outer edge,
+    // the stroke's antialiased diagonal and the cut-out's own both let the
+    // background through between them -- a light seam along the chamfers.
     const double FX0 = k.frameX, FY0 = k.frameY, FX1 = k.frameX + k.frameW, FY1 = k.frameY + k.frameH;
     const double FC  = std::clamp<double>(k.chamfer, 0.0, std::min(k.frameW, k.frameH) / 2.0);
     const double IN  = std::min({x - FX0, FX1 - x, y - FY0, FY1 - y, ((x - FX0) + (y - FY0) - FC) / std::numbers::sqrt2, ((FX1 - x) + (FY1 - y) - FC) / std::numbers::sqrt2});
-    const double CUT = std::clamp(0.5 - IN, 0.0, 1.0);
+    const double CUT = std::clamp(0.5 - (IN - k.inset), 0.0, 1.0);
     if (CUT <= 0.0)
         return 0.0;
 
@@ -1024,6 +1028,9 @@ void CMilSpecShadowDecoration::draw(PHLMONITOR pMonitor, float const& a) {
     key.chamfer = std::max(0, static_cast<int>(std::round(std::max<Config::INTEGER>(g_chamfer->value(), 0) * SCALE)));
     key.range   = std::max(1, static_cast<int>(std::round(std::max<Config::INTEGER>(g_shadowRange->value(), 1) * SCALE)));
     key.power   = std::clamp<int>(g_shadowRenderPower->value(), 1, 4);
+    // the stroke's width in monitor px, as the frame texture rounds it; 0
+    // when no stroke is drawn, so the shadow never shows inside the frame
+    key.inset   = FRAME->frameShown() && frameColor(ACTIVE).a > 0.F ? std::max(1, static_cast<int>(std::round(std::max<Config::INTEGER>(g_thickness->value(), 1) * SCALE))) : 0;
     key.sharp   = g_shadowSharp->value() != 0;
     key.color   = COL;
 
@@ -1032,8 +1039,9 @@ void CMilSpecShadowDecoration::draw(PHLMONITOR pMonitor, float const& a) {
 
         // everything well inside the frame is cut out anyway: skip it and
         // only build the ring around it (cost scales with the perimeter)
-        const int IX0 = std::max(0, key.frameX + key.chamfer + 1), IY0 = std::max(0, key.frameY + key.chamfer + 1);
-        const int IX1 = std::min(key.fullW, key.frameX + key.frameW - key.chamfer - 1), IY1 = std::min(key.fullH, key.frameY + key.frameH - key.chamfer - 1);
+        const int M   = key.chamfer + key.inset + 1;
+        const int IX0 = std::max(0, key.frameX + M), IY0 = std::max(0, key.frameY + M);
+        const int IX1 = std::min(key.fullW, key.frameX + key.frameW - M), IY1 = std::min(key.fullH, key.frameY + key.frameH - M);
 
         std::vector<std::array<int, 4>> rects;
         if (IX1 <= IX0 || IY1 <= IY0)
@@ -1090,8 +1098,8 @@ eDecorationLayer CMilSpecShadowDecoration::getDecorationLayer() {
     // without the clip, painted over by the covers. Drawn above them the
     // shadow runs along the whole chamfer instead of stopping at the window's
     // rectangle. Added before the frame (main.cpp), so the stroke stays on
-    // top of the shadow's antialiased cut-out edge. Without the clip, the
-    // covers outside the stroke still hide the shadow under them.
+    // top of the shadow, whose cut-out edge sits under it. Without the clip,
+    // the covers outside the stroke still hide the shadow under them.
     return DECORATION_LAYER_OVER;
 }
 
