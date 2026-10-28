@@ -25,7 +25,7 @@ Part of [Hypr-3LA](../README.md).
 
 ## Build and load
 
-Requires Hyprland 0.56.2 headers (see the [main README](../README.md#requirements)).
+Requires Hyprland 0.57.0 headers (see the [main README](../README.md#requirements)).
 Works on both the GL and Vulkan renderers.
 
 ```sh

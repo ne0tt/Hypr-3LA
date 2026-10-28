@@ -109,7 +109,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addLuaFunction(PHANDLE, "glitchclose", "close", luaGlitchClose); // auto-removed on unload
 
     g_closeListener  = Event::bus()->m_events.window.close.listen([](const PHLWINDOW& w) { g_glitchClose.onWindowClose(w); });
-    g_renderListener = Event::bus()->m_events.render.stage.listen([](eRenderStage stage) { g_glitchClose.onRenderStage(stage); });
+    g_renderListener = Event::bus()->m_events.render.stage.listen([](const Event::SRenderStageEvent& ev) { g_glitchClose.onRenderStage(ev); });
     g_reloadListener = Event::bus()->m_events.config.reloaded.listen([] { g_glitchClose.onConfigReloaded(); });
 
     return {"3LA-GlitchClose", "Shader-driven glitch collapse where a closed window was", "sispx", "1.0"};

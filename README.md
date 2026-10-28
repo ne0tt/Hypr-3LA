@@ -5,7 +5,7 @@ aesthetic: chamfered HUD frames, targeting-reticle corner brackets, reserved
 title bars, a GLSL "signal lost" window-close effect, and a shader that pulls
 un-themeable apps toward your theme colour.
 
-All are C++ Hyprland plugins built against **Hyprland 0.56.2**, configured
+All are C++ Hyprland plugins built against **Hyprland 0.57.0**, configured
 either through classic `hyprland.conf` keywords or Hyprland's Lua config
 (`hl.config`), and installable with `hyprpm`. Every plugin has an `enabled`
 option that turns it off live without unloading it.
@@ -163,7 +163,7 @@ fullscreen workspace, with some windows relabelled by `title_rules`:
 
 | | |
 |---|---|
-| **Hyprland 0.56.2** | Matched on *commit hash*, not version string, so two 0.56.2 builds from different commits still mismatch — see [Rebuilding after a Hyprland update](#rebuilding-after-a-hyprland-update) |
+| **Hyprland 0.57.0** | Matched on *commit hash*, not version string, so two 0.57.0 builds from different commits still mismatch — see [Rebuilding after a Hyprland update](#rebuilding-after-a-hyprland-update) |
 | **A GL renderer** | 3LA-GlitchClose and 3LA-Tint need raw GL calls; on a Vulkan backend they raise a notification and disable themselves. 3LA-Corners and 3LA-TitleBars are unaffected. 3LA-MilSpec only uses the renderer's texture API, but has only been tested on GL. |
 | **Function hooks** | 3LA-MilSpec's corner clip hooks two `CSurfacePassElement` methods by symbol name. If a Hyprland update renames them the plugin says so once at load and paints its corner covers instead; nothing else breaks. |
 
@@ -333,8 +333,9 @@ of crashing the compositor.
 # hyprpm route
 hyprpm update && hyprpm reload
 
-# manual route: clean + rebuild every plugin; --reload also unloads/reloads
-# any that are currently running
+# manual route: clean + rebuild every plugin (a plugin that fails to build
+# keeps its previous .so); --reload also unloads/reloads any that are
+# currently running
 ./rebuild-plugins.sh --reload
 
 # ...or one plugin by hand (unload before load — loading over a loaded

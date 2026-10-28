@@ -17,12 +17,14 @@
 #include <hyprland/src/config/ConfigValue.hpp>
 #include <hyprland/src/config/shared/complex/ComplexDataTypes.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
-#include <hyprland/src/desktop/Workspace.hpp>
+#include <hyprland/src/desktop/view/window/Window.hpp>
+#include <hyprland/src/desktop/view/window/WindowMetadata.hpp>
+#include <hyprland/src/desktop/view/window/WindowPresentation.hpp>
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/render/Texture.hpp>
+#include <hyprland/src/render/WindowRenderPresentation.hpp>
 #include <hyprland/src/render/decorations/DecorationPositioner.hpp>
 #include <hyprland/src/render/pass/TexPassElement.hpp>
 
@@ -135,14 +137,14 @@ static const std::vector<STitleRule>& titleRules() {
 // the bar text for w: its own title, unless a title_rule overrides it
 static std::string resolveDisplayTitle(const std::vector<STitleRule>& rules, const PHLWINDOW& w) {
     for (const auto& rule : rules) {
-        if (rule.classRe && !std::regex_search(w->m_class, *rule.classRe))
+        if (rule.classRe && !std::regex_search(w->metadata().appID(), *rule.classRe))
             continue;
-        if (rule.titleRe && !std::regex_search(w->m_title, *rule.titleRe))
+        if (rule.titleRe && !std::regex_search(w->metadata().title(), *rule.titleRe))
             continue;
         return rule.title;
     }
 
-    return w->m_title;
+    return w->metadata().title();
 }
 
 CMilSpecDecoration::CMilSpecDecoration(PHLWINDOW pWindow) : IHyprWindowDecoration(pWindow), m_window(pWindow) {
@@ -151,12 +153,12 @@ CMilSpecDecoration::CMilSpecDecoration(PHLWINDOW pWindow) : IHyprWindowDecoratio
 
 const std::string& CMilSpecDecoration::displayTitle(const PHLWINDOW& w) {
     const auto& RULES = titleRules();
-    if (m_hasDisplayTitle && m_displayTitleGen == titleRulesGen && m_displayTitleClass == w->m_class && m_displayTitleSrc == w->m_title)
+    if (m_hasDisplayTitle && m_displayTitleGen == titleRulesGen && m_displayTitleClass == w->metadata().appID() && m_displayTitleSrc == w->metadata().title())
         return m_displayTitle;
 
     m_displayTitle      = resolveDisplayTitle(RULES, w);
-    m_displayTitleClass = w->m_class;
-    m_displayTitleSrc   = w->m_title;
+    m_displayTitleClass = w->metadata().appID();
+    m_displayTitleSrc   = w->metadata().title();
     m_displayTitleGen   = titleRulesGen;
     m_hasDisplayTitle   = true;
     return m_displayTitle;
@@ -260,8 +262,8 @@ bool CMilSpecDecoration::hidden() const {
     if (!PWINDOW || !g_enabled->value())
         return true;
 
-    return matchesIgnorePattern(classRe, classPattern, g_ignoreClass->value(), PWINDOW->m_class) ||
-        matchesIgnorePattern(titleRe, titlePattern, g_ignoreTitle->value(), PWINDOW->m_title);
+    return matchesIgnorePattern(classRe, classPattern, g_ignoreClass->value(), PWINDOW->metadata().appID()) ||
+        matchesIgnorePattern(titleRe, titlePattern, g_ignoreTitle->value(), PWINDOW->metadata().title());
 }
 
 void CMilSpecDecoration::toggle() {
@@ -279,12 +281,12 @@ bool CMilSpecDecoration::barShown() const {
         return false;
 
     // opt-in classes: no bar unless the title matches (empty require_title = never)
-    if (matchesIgnorePattern(reqClassRe, reqClassPattern, g_titlebarRequireTitleClass->value(), PWINDOW->m_class) &&
-        !matchesIgnorePattern(reqTitleRe, reqTitlePattern, g_titlebarRequireTitle->value(), PWINDOW->m_title))
+    if (matchesIgnorePattern(reqClassRe, reqClassPattern, g_titlebarRequireTitleClass->value(), PWINDOW->metadata().appID()) &&
+        !matchesIgnorePattern(reqTitleRe, reqTitlePattern, g_titlebarRequireTitle->value(), PWINDOW->metadata().title()))
         return false;
 
-    return !matchesIgnorePattern(classRe, classPattern, g_titlebarIgnoreClass->value(), PWINDOW->m_class) &&
-        !matchesIgnorePattern(titleRe, titlePattern, g_titlebarIgnoreTitle->value(), PWINDOW->m_title);
+    return !matchesIgnorePattern(classRe, classPattern, g_titlebarIgnoreClass->value(), PWINDOW->metadata().appID()) &&
+        !matchesIgnorePattern(titleRe, titlePattern, g_titlebarIgnoreTitle->value(), PWINDOW->metadata().title());
 }
 
 // own caches again, for the same reason as barShown()
@@ -296,8 +298,8 @@ bool CMilSpecDecoration::frameShown() const {
     if (!PWINDOW || g_frame->value() == 0)
         return false;
 
-    return !matchesIgnorePattern(classRe, classPattern, g_frameIgnoreClass->value(), PWINDOW->m_class) &&
-        !matchesIgnorePattern(titleRe, titlePattern, g_frameIgnoreTitle->value(), PWINDOW->m_title);
+    return !matchesIgnorePattern(classRe, classPattern, g_frameIgnoreClass->value(), PWINDOW->metadata().appID()) &&
+        !matchesIgnorePattern(titleRe, titlePattern, g_frameIgnoreTitle->value(), PWINDOW->metadata().title());
 }
 
 // own caches again, for the same reason as barShown()
@@ -306,7 +308,7 @@ bool CMilSpecDecoration::topFlush() const {
     static std::string               classPattern;
 
     const auto PWINDOW = m_window.lock();
-    return PWINDOW && matchesIgnorePattern(classRe, classPattern, g_offsetTopFlushClass->value(), PWINDOW->m_class);
+    return PWINDOW && matchesIgnorePattern(classRe, classPattern, g_offsetTopFlushClass->value(), PWINDOW->metadata().appID());
 }
 
 // per-side bar inset; -1 = use titlebar.offset
@@ -363,7 +365,7 @@ CMilSpecDecoration::SInsets CMilSpecDecoration::insets(const PHLWINDOW& w) const
         ins.b = m_assigned.h - ins.t - m_assignedWinSize.y;
     } else {
         // no reply yet: assume only the core border sits inside us
-        const double B = w->getRealBorderSize(), T = std::max<Config::INTEGER>(g_thickness->value(), 1);
+        const double B = w->presentation().borderSize(), T = std::max<Config::INTEGER>(g_thickness->value(), 1);
         const double E = B + std::max<Config::INTEGER>(g_offset->value(), 0) + T;
         ins            = {.l = E, .t = B + T + topBand(barShown(), topFlush()), .r = E, .b = E};
     }
@@ -594,7 +596,7 @@ SP<ITexture> CMilSpecDecoration::titleTexture(const std::string& title, const CH
     return m_textTex;
 }
 
-void CMilSpecDecoration::draw(PHLMONITOR pMonitor, float const& a) {
+void CMilSpecDecoration::draw(Render::CRenderContext& ctx, PHLMONITOR pMonitor, float const& a, const Render::SWindowRenderPresentation& presentation) {
     const auto PWINDOW = m_window.lock();
     if (!PWINDOW || !pMonitor || !Desktop::View::validMapped(PWINDOW) || PWINDOW->isHidden())
         return;
@@ -630,9 +632,7 @@ void CMilSpecDecoration::draw(PHLMONITOR pMonitor, float const& a) {
     if (STROKECOL.a <= 0.F && (!BARON || barCol.a <= 0.F) && BGCOL.a <= 0.F && !COVERON)
         return;
 
-    Vector2D offset = PWINDOW->m_floatingOffset - pMonitor->m_position;
-    if (PWINDOW->m_workspace)
-        offset = offset + PWINDOW->m_workspace->m_renderOffset->value();
+    const Vector2D offset = presentation.floatingOffset + presentation.workspaceOffset - pMonitor->m_position;
 
     const auto   INS     = insets(PWINDOW);
     const double SCALE   = pMonitor->m_scale;
@@ -664,7 +664,7 @@ void CMilSpecDecoration::draw(PHLMONITOR pMonitor, float const& a) {
 
     // window + core border in monitor px, shared by the background's hole
     // and the corner covers
-    const double BORDER = PWINDOW->getRealBorderSize();
+    const double BORDER = PWINDOW->presentation().borderSize();
     const CBox   WIN    = CBox{PWINDOW->position(GEO), PWINDOW->size(GEO)}
                            .expand(BORDER)
                            .translate(offset)
@@ -675,8 +675,8 @@ void CMilSpecDecoration::draw(PHLMONITOR pMonitor, float const& a) {
     // (CHyprBorderDecoration::draw): square unless the window is rounded
     SHoleGeom hole;
     if (BGCOL.a > 0.F) {
-        const double ROUNDING = PWINDOW->rounding();
-        const double POWER    = PWINDOW->roundingPower();
+        const double ROUNDING = PWINDOW->presentation().rounding();
+        const double POWER    = PWINDOW->presentation().roundingPower();
         hole.x                = static_cast<int>(WIN.x - box.x);
         hole.y                = static_cast<int>(WIN.y - box.y);
         hole.w                = static_cast<int>(WIN.w);
@@ -729,7 +729,7 @@ void CMilSpecDecoration::draw(PHLMONITOR pMonitor, float const& a) {
     data.tex = TEX;
     data.box = drawBox;
     data.a   = 1.F;
-    g_pHyprRenderer->m_renderPass.add(makeUnique<CTexPassElement>(data));
+    g_pHyprRenderer->addPassElement(ctx, makeUnique<CTexPassElement>(data));
 
     if (bar.h <= 0 || bar.right <= bar.left || BAROPACITY <= 0.F)
         return;
@@ -766,7 +766,7 @@ void CMilSpecDecoration::draw(PHLMONITOR pMonitor, float const& a) {
     textData.tex = TEXT;
     textData.box = stretchBox(textBox, box, drawBox);
     textData.a   = BAROPACITY; // fade the text with the bar, without re-rendering it
-    g_pHyprRenderer->m_renderPass.add(makeUnique<CTexPassElement>(textData));
+    g_pHyprRenderer->addPassElement(ctx, makeUnique<CTexPassElement>(textData));
 }
 
 eDecorationType CMilSpecDecoration::getDecorationType() {
@@ -793,7 +793,7 @@ void CMilSpecDecoration::damageEntire() {
 
     // +1 px for the antialiased edge landing on a rounded pixel boundary, plus
     // the shadow's reach so a focus/config change repaints it too
-    CBox box = frameBox(PWINDOW).translate(PWINDOW->m_floatingOffset).expand(1 + milspecShadowPad());
+    CBox box = frameBox(PWINDOW).translate(PWINDOW->presentation().floatingOffset()).expand(1 + milspecShadowPad());
 
     m_lastDamageBox = box;
     m_hasDamageBox  = true;
@@ -864,8 +864,8 @@ bool CMilSpecShadowDecoration::shown() const {
     if (!FRAME || FRAME->hidden())
         return false;
 
-    return !matchesIgnorePattern(classRe, classPattern, g_shadowIgnoreClass->value(), PWINDOW->m_class) &&
-        !matchesIgnorePattern(titleRe, titlePattern, g_shadowIgnoreTitle->value(), PWINDOW->m_title);
+    return !matchesIgnorePattern(classRe, classPattern, g_shadowIgnoreClass->value(), PWINDOW->metadata().appID()) &&
+        !matchesIgnorePattern(titleRe, titlePattern, g_shadowIgnoreTitle->value(), PWINDOW->metadata().title());
 }
 
 SBoxExtents CMilSpecShadowDecoration::computeExtents(const PHLWINDOW& w) const {
@@ -984,7 +984,7 @@ static SP<ITexture> shadowTile(const CMilSpecShadowDecoration::SKey& k, int tx, 
     return tex;
 }
 
-void CMilSpecShadowDecoration::draw(PHLMONITOR pMonitor, float const& a) {
+void CMilSpecShadowDecoration::draw(Render::CRenderContext& ctx, PHLMONITOR pMonitor, float const& a, const Render::SWindowRenderPresentation& presentation) {
     const auto PWINDOW = m_window.lock();
     if (!PWINDOW || !pMonitor || !Desktop::View::validMapped(PWINDOW) || PWINDOW->isHidden())
         return;
@@ -1004,9 +1004,7 @@ void CMilSpecShadowDecoration::draw(PHLMONITOR pMonitor, float const& a) {
     if (COL.a <= 0.F)
         return;
 
-    Vector2D offset = PWINDOW->m_floatingOffset - pMonitor->m_position;
-    if (PWINDOW->m_workspace)
-        offset = offset + PWINDOW->m_workspace->m_renderOffset->value();
+    const Vector2D offset = presentation.floatingOffset + presentation.workspaceOffset - pMonitor->m_position;
 
     const double SCALE       = pMonitor->m_scale;
     const CBox   LAYOUTFRAME = FRAME->frameBox(PWINDOW, textureGeometry(PWINDOW));
@@ -1071,7 +1069,7 @@ void CMilSpecShadowDecoration::draw(PHLMONITOR pMonitor, float const& a) {
         data.tex = t.tex;
         data.box = stretchBox({full.x + t.x, full.y + t.y, static_cast<double>(t.w), static_cast<double>(t.h)}, full, drawFull);
         data.a   = 1.F;
-        g_pHyprRenderer->m_renderPass.add(makeUnique<CTexPassElement>(data));
+        g_pHyprRenderer->addPassElement(ctx, makeUnique<CTexPassElement>(data));
     }
 }
 

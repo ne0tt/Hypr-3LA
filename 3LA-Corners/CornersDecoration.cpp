@@ -6,11 +6,12 @@
 #include <hyprland/src/config/ConfigValue.hpp>
 #include <hyprland/src/config/shared/complex/ComplexDataTypes.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
-#include <hyprland/src/desktop/Workspace.hpp>
+#include <hyprland/src/desktop/view/window/Window.hpp>
+#include <hyprland/src/desktop/view/window/WindowPresentation.hpp>
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/render/Renderer.hpp>
+#include <hyprland/src/render/WindowRenderPresentation.hpp>
 #include <hyprland/src/render/decorations/DecorationPositioner.hpp>
 #include <hyprland/src/render/pass/RectPassElement.hpp>
 
@@ -151,7 +152,7 @@ double CCornersDecoration::extraTopReserved() const {
 
     // the border is itself a reserved sticky decoration, so it counts as ours
     const double TOTAL = g_pDecorationPositioner->getWindowDecorationReserved(m_window).topLeft.y;
-    const double OWN   = PWINDOW->getRealBorderSize() + g_offset->value() + g_thickness->value();
+    const double OWN   = PWINDOW->presentation().borderSize() + g_offset->value() + g_thickness->value();
     return std::max<double>(0.0, TOTAL - OWN);
 }
 
@@ -211,7 +212,7 @@ std::array<CBox, 4> CCornersDecoration::lineBoxes(const Vector2D& pos, const Vec
 // box drawn behind it. no shader access from a plugin, so this stands in for a
 // true soft blur -- a stepped halo rather than a smooth one, tuned by
 // glow.size (spread) and glow.strength (overall intensity).
-void CCornersDecoration::drawGlow(const CBox& box, const CHyprColor& color, float alpha) const {
+void CCornersDecoration::drawGlow(Render::CRenderContext& ctx, const CBox& box, const CHyprColor& color, float alpha) const {
     static constexpr int LAYERS = 4;
 
     const float SIZE     = std::max<Config::INTEGER>(g_glowSize->value(), 0);
@@ -229,11 +230,11 @@ void CCornersDecoration::drawGlow(const CBox& box, const CHyprColor& color, floa
         CRectPassElement::SRectData data;
         data.box   = CBox{box}.expand(EXPAND);
         data.color = CHyprColor{static_cast<float>(color.r), static_cast<float>(color.g), static_cast<float>(color.b), LAYERALPHA};
-        g_pHyprRenderer->m_renderPass.add(makeUnique<CRectPassElement>(data));
+        g_pHyprRenderer->addPassElement(ctx, makeUnique<CRectPassElement>(data));
     }
 }
 
-void CCornersDecoration::draw(PHLMONITOR pMonitor, float const& a) {
+void CCornersDecoration::draw(Render::CRenderContext& ctx, PHLMONITOR pMonitor, float const& a, const Render::SWindowRenderPresentation& presentation) {
     // retire an elapsed burst before the early-returns below, so the flag does not
     // linger on a window that is fullscreen or hidden for the whole burst
     if (m_flashing && flashExpired()) {
@@ -269,12 +270,10 @@ void CCornersDecoration::draw(PHLMONITOR pMonitor, float const& a) {
 
     const CHyprColor glow = glowColor(col);
 
-    const double D         = PWINDOW->getRealBorderSize() + g_offset->value() + g_thickness->value();
+    const double D         = PWINDOW->presentation().borderSize() + g_offset->value() + g_thickness->value();
     const double TOPEXTRA  = extraTopReserved();
 
-    Vector2D     offset = PWINDOW->m_floatingOffset - pMonitor->m_position;
-    if (PWINDOW->m_workspace)
-        offset = offset + PWINDOW->m_workspace->m_renderOffset->value();
+    const Vector2D offset = presentation.floatingOffset + presentation.workspaceOffset - pMonitor->m_position;
 
     // glow only renders while a spawn/focus flash burst is actively running,
     // not on every frame -- keeps the brackets plain the rest of the time.
@@ -297,7 +296,7 @@ void CCornersDecoration::draw(PHLMONITOR pMonitor, float const& a) {
             CRectPassElement::SRectData data;
             data.box   = box.translate(offset).scale(pMonitor->m_scale).round();
             data.color = lineCol;
-            g_pHyprRenderer->m_renderPass.add(makeUnique<CRectPassElement>(data));
+            g_pHyprRenderer->addPassElement(ctx, makeUnique<CRectPassElement>(data));
         }
     }
 
@@ -305,12 +304,12 @@ void CCornersDecoration::draw(PHLMONITOR pMonitor, float const& a) {
         CBox scaledBox = box.translate(offset).scale(pMonitor->m_scale).round();
 
         if (GLOW)
-            drawGlow(scaledBox, glow, col.a);
+            drawGlow(ctx, scaledBox, glow, col.a);
 
         CRectPassElement::SRectData data;
         data.box   = scaledBox;
         data.color = col;
-        g_pHyprRenderer->m_renderPass.add(makeUnique<CRectPassElement>(data));
+        g_pHyprRenderer->addPassElement(ctx, makeUnique<CRectPassElement>(data));
     }
 }
 
@@ -342,9 +341,9 @@ void CCornersDecoration::damageEntire() {
     const double GLOWEXPAND  = g_glow->value() != 0 ? std::max<Config::INTEGER>(g_glowSize->value(), 0) : 0;
     // lines pushed outward by a negative lines.offset land past the brackets
     const double LINESEXPAND = g_lines->value() != 0 ? std::max<Config::INTEGER>(-g_linesOffset->value(), 0) : 0;
-    const double D           = PWINDOW->getRealBorderSize() + g_offset->value() + g_thickness->value() + std::max(GLOWEXPAND, LINESEXPAND);
+    const double D           = PWINDOW->presentation().borderSize() + g_offset->value() + g_thickness->value() + std::max(GLOWEXPAND, LINESEXPAND);
     CBox         box        = PWINDOW->geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
-    box.translate(PWINDOW->m_floatingOffset).expand(D);
+    box.translate(PWINDOW->presentation().floatingOffset()).expand(D);
 
     // grow further upward only, to cover brackets pushed out past other
     // reserved top decorations (e.g. 3LA-TitleBars)

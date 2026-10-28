@@ -13,11 +13,14 @@
 #include <utility>
 
 #include <hyprland/src/debug/log/Logger.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/desktop/view/window/Window.hpp>
+#include <hyprland/src/desktop/view/window/WindowMetadata.hpp>
+#include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/helpers/math/Math.hpp>
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/protocols/core/Compositor.hpp>
+#include <hyprland/src/render/Context.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/render/Shader.hpp>
@@ -41,8 +44,8 @@ namespace {
     };
     template struct SRob<&Render::CRenderPass::m_passElements>;
 
-    auto& passElements() {
-        return passElementsOf(g_pHyprRenderer->m_renderPass, SPassTag{});
+    auto& passElements(Render::CRenderPass& pass) {
+        return passElementsOf(pass, SPassTag{});
     }
 
     float unit(const SP<Config::Values::CFloatValue>& v) {
@@ -97,10 +100,10 @@ bool CTintManager::matches(const PHLWINDOW& w) const {
     if (verdicts.size() > 256)
         verdicts.clear();
     auto& v = verdicts[w.get()];
-    if (v.cls != w->m_class || v.title != w->m_title || v.clsPat != CLSPAT || v.titlePat != TITLEPAT || v.exclClsPat != EXCLCLSPAT || v.exclTitlePat != EXCLTITLEPAT ||
+    if (v.cls != w->metadata().appID() || v.title != w->metadata().title() || v.clsPat != CLSPAT || v.titlePat != TITLEPAT || v.exclClsPat != EXCLCLSPAT || v.exclTitlePat != EXCLTITLEPAT ||
         v.fsClsPat != FSCLSPAT || v.fullscreen != FULLSCREEN) {
-        v.cls          = w->m_class;
-        v.title        = w->m_title;
+        v.cls          = w->metadata().appID();
+        v.title        = w->metadata().title();
         v.clsPat       = CLSPAT;
         v.titlePat     = TITLEPAT;
         v.exclClsPat   = EXCLCLSPAT;
@@ -108,26 +111,31 @@ bool CTintManager::matches(const PHLWINDOW& w) const {
         v.fsClsPat     = FSCLSPAT;
         v.fullscreen   = FULLSCREEN;
         // exclusions win over matches; a bad exclusion regex excludes nothing
-        const bool EXCLUDED = matchesPattern(excludeClassRe, excludeClassPattern, EXCLCLSPAT, w->m_class) ||
-            matchesPattern(excludeTitleRe, excludeTitlePattern, EXCLTITLEPAT, w->m_title) ||
-            (FULLSCREEN && matchesPattern(fullscreenClassRe, fullscreenClassPattern, FSCLSPAT, w->m_class));
-        v.hit = !EXCLUDED && (matchesPattern(classRe, classPattern, CLSPAT, w->m_class) || matchesPattern(titleRe, titlePattern, TITLEPAT, w->m_title));
+        const bool EXCLUDED = matchesPattern(excludeClassRe, excludeClassPattern, EXCLCLSPAT, w->metadata().appID()) ||
+            matchesPattern(excludeTitleRe, excludeTitlePattern, EXCLTITLEPAT, w->metadata().title()) ||
+            (FULLSCREEN && matchesPattern(fullscreenClassRe, fullscreenClassPattern, FSCLSPAT, w->metadata().appID()));
+        v.hit = !EXCLUDED && (matchesPattern(classRe, classPattern, CLSPAT, w->metadata().appID()) || matchesPattern(titleRe, titlePattern, TITLEPAT, w->metadata().title()));
     }
     return v.hit;
 }
 
-void CTintManager::onRenderStage(eRenderStage stage) {
-    if (stage == RENDER_PRE_WINDOW) {
-        const auto W  = g_pHyprRenderer->renderData().currentWindow.lock();
-        m_startIndex  = matches(W) ? static_cast<long>(passElements().size()) : -1;
+void CTintManager::onRenderStage(const Event::SRenderStageEvent& ev) {
+    if (!ev.context)
+        return;
+
+    auto& ctx = ev.context->get();
+
+    if (ev.stage == RENDER_PRE_WINDOW) {
+        const auto W  = ctx.m_data.currentWindow.lock();
+        m_startIndex  = matches(W) ? static_cast<long>(passElements(ctx.m_pass).size()) : -1;
         if (m_startIndex >= 0)
         return;
     }
 
-    if (stage != RENDER_POST_WINDOW || m_startIndex < 0)
+    if (ev.stage != RENDER_POST_WINDOW || m_startIndex < 0)
         return;
 
-    auto&      elems = passElements();
+    auto&      elems = passElements(ctx.m_pass);
     const auto START = static_cast<size_t>(m_startIndex);
     m_startIndex     = -1;
 
@@ -156,7 +164,7 @@ void CTintManager::onRenderStage(eRenderStage stage) {
         const bool  ALPHA = !OPAQUE && TEX->m_type == Render::TEXTURE_RGBA && !TEX->m_opaque && TEX->m_transform == HYPRUTILS_TRANSFORM_NORMAL;
         // same clip the renderer scissored this surface with (see STintBox)
         bool    cancel = false;
-        CRegion clip   = s->visibleRegion(cancel);
+        CRegion clip   = s->visibleRegion(ctx, cancel);
         if (cancel)
             clip = {};
         (s->m_data.popup ? popupBoxes : boxes).push_back({s->getTexBox(), ROUND ? static_cast<float>(s->m_data.rounding) : 0.F, s->m_data.roundingPower, ALPHA ? TEX : nullptr, std::move(clip)});
@@ -167,7 +175,7 @@ void CTintManager::onRenderStage(eRenderStage stage) {
     if (!boxes.empty())
         elems.emplace(elems.begin() + mainEnd)->element = makeUnique<CTintPassElement>(std::move(boxes));
     if (!popupBoxes.empty())
-        g_pHyprRenderer->m_renderPass.add(makeUnique<CTintPassElement>(std::move(popupBoxes)));
+        ctx.m_pass.add(makeUnique<CTintPassElement>(std::move(popupBoxes)));
 }
 
 bool CTintManager::ensureShader() {
@@ -273,16 +281,16 @@ static std::pair<float, float> hueSat(const CHyprColor& col) {
     return {h / 6.F, S};
 }
 
-void CTintManager::drawBoxes(const std::vector<STintBox>& boxes) {
-    const auto MON = g_pHyprRenderer->renderData().pMonitor.lock();
+void CTintManager::drawBoxes(Render::CRenderContext& ctx, const std::vector<STintBox>& boxes) {
+    const auto MON = ctx.m_data.pMonitor.lock();
     if (!MON || !ensureShader())
         return;
 
-    const CRegion& DAMAGE = g_pHyprRenderer->renderData().damage;
+    const CRegion& DAMAGE = ctx.m_data.damage;
     if (DAMAGE.empty())
         return;
 
-    // renderData().fbSize can be stale (left at a temp FB's size), so clamp
+    // ctx.m_data.fbSize can be stale (left at a temp FB's size), so clamp
     // to the monitor's pixel size instead
     const Vector2D fbSize = MON->m_pixelSize;
 
@@ -411,8 +419,8 @@ void CTintManager::drawBoxes(const std::vector<STintBox>& boxes) {
         }
 
         glBindVertexArray(m_vao);
-        region.forEachRect([](const auto& R) {
-            Render::GL::g_pHyprOpenGL->scissor(&R, true);
+        region.forEachRect([&ctx](const auto& R) {
+            Render::GL::g_pHyprOpenGL->scissor(ctx, &R, true);
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         });
         glBindVertexArray(0);
@@ -434,10 +442,10 @@ void CTintManager::onConfigReloaded() {
 }
 
 void CTintManager::reset() {
-    // the pass keeps last frame's elements until the next frame starts; ours
-    // must go now, while their vtable/destructor code is still mapped, or
-    // Hyprland crashes freeing them after the .so is unloaded
-    std::erase_if(passElements(), [](const auto& e) { return dynamic_cast<CTintPassElement*>(e.element.get()) != nullptr; });
+    // anything of ours still queued in the renderer's pass must go now, while
+    // its vtable/destructor code is still mapped, or Hyprland crashes freeing
+    // it after the .so is unloaded
+    std::erase_if(passElements(g_pHyprRenderer->context().m_pass), [](const auto& e) { return dynamic_cast<CTintPassElement*>(e.element.get()) != nullptr; });
 
     if (m_vao)
         glDeleteVertexArrays(1, &m_vao);
@@ -452,7 +460,7 @@ void CTintManager::reset() {
     m_startIndex   = -1;
 }
 
-std::vector<UP<IPassElement>> CTintPassElement::draw() {
-    g_tint.drawBoxes(m_boxes);
+std::vector<UP<IPassElement>> CTintPassElement::draw(Render::CRenderContext& ctx) {
+    g_tint.drawBoxes(ctx, m_boxes);
     return {};
 }

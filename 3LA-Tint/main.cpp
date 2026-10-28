@@ -41,7 +41,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                           SP<IValue>(g_fullscreenExcludeClass), SP<IValue>(g_color), SP<IValue>(g_strength), SP<IValue>(g_satLo), SP<IValue>(g_satHi), SP<IValue>(g_minLuma), SP<IValue>(g_lightLo), SP<IValue>(g_lightHi)})
         HyprlandAPI::addConfigValueV2(PHANDLE, v);
 
-    g_renderListener = Event::bus()->m_events.render.stage.listen([](eRenderStage stage) { g_tint.onRenderStage(stage); });
+    g_renderListener = Event::bus()->m_events.render.stage.listen([](const Event::SRenderStageEvent& ev) { g_tint.onRenderStage(ev); });
     g_reloadListener = Event::bus()->m_events.config.reloaded.listen([] { g_tint.onConfigReloaded(); });
 
     return {"3LA-Tint", "Recolours grey pixels of matched windows toward a matugen colour", "sispx", "1.0"};

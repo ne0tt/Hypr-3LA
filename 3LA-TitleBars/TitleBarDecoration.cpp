@@ -9,12 +9,14 @@
 #include <hyprland/src/config/ConfigValue.hpp>
 #include <hyprland/src/config/shared/Types.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
-#include <hyprland/src/desktop/Workspace.hpp>
+#include <hyprland/src/desktop/view/window/Window.hpp>
+#include <hyprland/src/desktop/view/window/WindowMetadata.hpp>
+#include <hyprland/src/desktop/view/window/WindowPresentation.hpp>
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/render/Texture.hpp>
+#include <hyprland/src/render/WindowRenderPresentation.hpp>
 #include <hyprland/src/render/decorations/DecorationPositioner.hpp>
 #include <hyprland/src/render/pass/RectPassElement.hpp>
 #include <hyprland/src/render/pass/TexPassElement.hpp>
@@ -91,9 +93,9 @@ static bool titleBarIgnored(const PHLWINDOW& w) {
     if (!w)
         return true;
 
-    if (matchesIgnorePattern(classRe, classPattern, g_ignoreClass->value(), w->m_class))
+    if (matchesIgnorePattern(classRe, classPattern, g_ignoreClass->value(), w->metadata().appID()))
         return true;
-    if (matchesIgnorePattern(titleRe, titlePattern, g_ignoreTitle->value(), w->m_title))
+    if (matchesIgnorePattern(titleRe, titlePattern, g_ignoreTitle->value(), w->metadata().title()))
         return true;
 
     return false;
@@ -187,14 +189,14 @@ static std::string resolveDisplayTitle(const PHLWINDOW& w) {
         return "";
 
     for (const auto& rule : titleRules()) {
-        if (rule.classRe && !std::regex_search(w->m_class, *rule.classRe))
+        if (rule.classRe && !std::regex_search(w->metadata().appID(), *rule.classRe))
             continue;
-        if (rule.titleRe && !std::regex_search(w->m_title, *rule.titleRe))
+        if (rule.titleRe && !std::regex_search(w->metadata().title(), *rule.titleRe))
             continue;
         return rule.title;
     }
 
-    return w->m_title;
+    return w->metadata().title();
 }
 
 void CTitleBarDecoration::toggle() {
@@ -260,7 +262,7 @@ static bool hyprShadowsEnabled() {
 // shadow_strength=1.0 actually composites to near-opaque right at the bar,
 // fading out smoothly over shadow_size -- rather than topping out around
 // ~35% alpha regardless of the configured strength.
-void CTitleBarDecoration::drawShadow(const CBox& scaledBox, float barAlpha) const {
+void CTitleBarDecoration::drawShadow(Render::CRenderContext& ctx, const CBox& scaledBox, float barAlpha) const {
     static constexpr int LAYERS = 6;
 
     if (!g_shadow->value() || !hyprShadowsEnabled())
@@ -283,7 +285,7 @@ void CTitleBarDecoration::drawShadow(const CBox& scaledBox, float barAlpha) cons
         CRectPassElement::SRectData data;
         data.box   = CBox{scaledBox}.expand(EXPAND);
         data.color = CHyprColor{static_cast<float>(col.r), static_cast<float>(col.g), static_cast<float>(col.b), LAYERALPHA};
-        g_pHyprRenderer->m_renderPass.add(makeUnique<CRectPassElement>(data));
+        g_pHyprRenderer->addPassElement(ctx, makeUnique<CRectPassElement>(data));
     }
 }
 
@@ -300,7 +302,7 @@ SP<ITexture> CTitleBarDecoration::titleTexture(const std::string& title, const C
     return m_textTex;
 }
 
-void CTitleBarDecoration::draw(PHLMONITOR pMonitor, float const& a) {
+void CTitleBarDecoration::draw(Render::CRenderContext& ctx, PHLMONITOR pMonitor, float const& a, const Render::SWindowRenderPresentation& presentation) {
     const auto PWINDOW = m_window.lock();
     if (!PWINDOW || !Desktop::View::validMapped(PWINDOW) || PWINDOW->isHidden())
         return;
@@ -325,9 +327,7 @@ void CTitleBarDecoration::draw(PHLMONITOR pMonitor, float const& a) {
     if (col.a <= 0.F)
         return;
 
-    Vector2D offset = PWINDOW->m_floatingOffset - pMonitor->m_position;
-    if (PWINDOW->m_workspace)
-        offset = offset + PWINDOW->m_workspace->m_renderOffset->value();
+    const Vector2D offset = presentation.floatingOffset + presentation.workspaceOffset - pMonitor->m_position;
 
     // the reserved slot is height + gap.top + gap.bottom tall; inset it by
     // `gap.top` (default: `gap`) on top and `gap.bottom` on the bottom. The
@@ -336,7 +336,7 @@ void CTitleBarDecoration::draw(PHLMONITOR pMonitor, float const& a) {
     // border's outer edges.
     const double GAPTOP    = gapTop();
     const double GAPBOTTOM = std::max<Config::INTEGER>(g_gapBottom->value(), 0);
-    const double BORDER    = PWINDOW->getRealBorderSize();
+    const double BORDER    = PWINDOW->presentation().borderSize();
     const auto   WINPOS    = PWINDOW->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
     const auto   WINSIZE   = PWINDOW->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
     CBox         box       = g_pDecorationPositioner->getWindowDecorationBox(this);
@@ -350,12 +350,12 @@ void CTitleBarDecoration::draw(PHLMONITOR pMonitor, float const& a) {
 
     CBox scaledBox = box.translate(offset).scale(pMonitor->m_scale).round();
 
-    drawShadow(scaledBox, col.a);
+    drawShadow(ctx, scaledBox, col.a);
 
     CRectPassElement::SRectData data;
     data.box   = scaledBox;
     data.color = col;
-    g_pHyprRenderer->m_renderPass.add(makeUnique<CRectPassElement>(data));
+    g_pHyprRenderer->addPassElement(ctx, makeUnique<CRectPassElement>(data));
 
     const std::string DISPLAYTITLE = resolveDisplayTitle(PWINDOW);
     if (DISPLAYTITLE.empty() || scaledBox.w <= 2 * TEXT_PAD_X || scaledBox.h <= 1)
@@ -386,7 +386,7 @@ void CTitleBarDecoration::draw(PHLMONITOR pMonitor, float const& a) {
     texData.tex = TEX;
     texData.box = textBox;
     texData.a   = col.a; // fade the text with the bar itself
-    g_pHyprRenderer->m_renderPass.add(makeUnique<CTexPassElement>(texData));
+    g_pHyprRenderer->addPassElement(ctx, makeUnique<CTexPassElement>(texData));
 }
 
 eDecorationType CTitleBarDecoration::getDecorationType() {
@@ -417,7 +417,7 @@ void CTitleBarDecoration::damageEntire() {
     const double SHADOWEXPAND = (g_shadow->value() != 0 && hyprShadowsEnabled()) ? std::max<Config::INTEGER>(g_shadowSize->value(), 0) : 0;
 
     CBox box = g_pDecorationPositioner->getWindowDecorationBox(this);
-    box.translate(PWINDOW->m_floatingOffset);
+    box.translate(PWINDOW->presentation().floatingOffset());
     box.expand(SHADOWEXPAND);
 
     m_lastDamageBox = box;

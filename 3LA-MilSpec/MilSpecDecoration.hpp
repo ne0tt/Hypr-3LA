@@ -18,7 +18,7 @@ class CMilSpecDecoration : public IHyprWindowDecoration {
 
     virtual SDecorationPositioningInfo getPositioningInfo();
     virtual void                       onPositioningReply(const SDecorationPositioningReply& reply);
-    virtual void                       draw(PHLMONITOR pMonitor, float const& a);
+    virtual void                       draw(Render::CRenderContext& ctx, PHLMONITOR pMonitor, float const& a, const Render::SWindowRenderPresentation& presentation);
     virtual eDecorationType            getDecorationType();
     virtual void                       updateWindow(PHLWINDOW pWindow);
     virtual void                       damageEntire();
@@ -146,7 +146,7 @@ class CMilSpecShadowDecoration : public IHyprWindowDecoration {
 
     virtual SDecorationPositioningInfo getPositioningInfo();
     virtual void                       onPositioningReply(const SDecorationPositioningReply& reply);
-    virtual void                       draw(PHLMONITOR pMonitor, float const& a);
+    virtual void                       draw(Render::CRenderContext& ctx, PHLMONITOR pMonitor, float const& a, const Render::SWindowRenderPresentation& presentation);
     virtual eDecorationType            getDecorationType();
     virtual void                       updateWindow(PHLWINDOW pWindow);
     virtual void                       damageEntire();

@@ -6,6 +6,10 @@
 # plugin needs a fresh build (well after `make clean`, so stale objects
 # can't hide a real mismatch) whenever Hyprland is updated.
 #
+# A plugin whose build fails keeps its previous .so: it is copied aside
+# before `make clean` and put back on failure, so a build broken by an API
+# change never leaves the path hyprland.lua loads from empty.
+#
 # Usage:
 #   ./rebuild-plugins.sh            # clean + build every plugin
 #   ./rebuild-plugins.sh --reload   # also unload/load any plugin that's
@@ -33,16 +37,28 @@ done
 failed=()
 built=()
 
+backup_dir="$(mktemp -d)"
+trap 'rm -rf "$backup_dir"' EXIT
+
 for plugin_dir in "${plugins[@]}"; do
     name="$(basename "$plugin_dir")"
+    so="$plugin_dir/$name.so"
+    backup="$backup_dir/$name.so"
     echo "==> $name"
+    if [[ -f "$so" ]]; then
+        cp -p "$so" "$backup"
+    fi
     if make -C "$plugin_dir" clean >/dev/null && make -C "$plugin_dir"; then
-        so="$plugin_dir/$name.so"
         built+=("$name")
         echo "    built: $so ($(du -h "$so" | cut -f1))"
     else
         failed+=("$name")
-        echo "    FAILED: $name" >&2
+        if [[ -f "$backup" ]]; then
+            cp -p "$backup" "$so"
+            echo "    FAILED: $name (previous $name.so restored)" >&2
+        else
+            echo "    FAILED: $name (no previous $name.so to restore)" >&2
+        fi
     fi
     echo
 done

@@ -17,8 +17,13 @@ class CShader;
 class CEventLoopTimer;
 
 namespace Render {
+    class CRenderContext;
     class ITexture;
     class IFramebuffer;
+}
+
+namespace Event {
+    struct SRenderStageEvent;
 }
 
 // Plays a shader-driven glitch collapse over a closing window: snapshot the
@@ -36,7 +41,7 @@ class CGlitchCloseManager {
   public:
     SDispatchResult dispatchClose();
     void            onWindowClose(const PHLWINDOW& w);
-    void            onRenderStage(eRenderStage stage);
+    void            onRenderStage(const Event::SRenderStageEvent& ev);
     void            onConfigReloaded();
     void            reset();
 
@@ -99,9 +104,9 @@ class CGlitchCloseManager {
     bool        ensureShader();
     bool        ensureTarget(SEffect& e, const PHLMONITOR& mon);
     static void buildUV(SEffect& e, const PHLMONITOR& mon, const SP<Render::ITexture>& snap);
-    void        renderToTarget(SEffect& e, const PHLMONITOR& mon, double elapsedMs, double durationMs, float env);
-    void                 drawEffect(const SEffect& e, const PHLMONITOR& mon, double elapsedMs, double durationMs, float env);
-    void                 drawCaption(const CBox& box, const PHLMONITOR& mon, double elapsedMs, double durationMs, float env);
+    void        renderToTarget(Render::CRenderContext& ctx, SEffect& e, const PHLMONITOR& mon, double elapsedMs, double durationMs, float env);
+    void                 drawEffect(Render::CRenderContext& ctx, const SEffect& e, const PHLMONITOR& mon, double elapsedMs, double durationMs, float env);
+    void                 drawCaption(Render::CRenderContext& ctx, const CBox& box, const PHLMONITOR& mon, double elapsedMs, double durationMs, float env);
     SP<Render::ITexture> textTexture();
     static bool matches(std::optional<std::regex>& cache, std::string& cachedPattern, const std::string& pattern, const std::string& s);
 

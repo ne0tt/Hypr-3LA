@@ -12,7 +12,7 @@
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
 #include <hyprland/src/desktop/types/OverridableVar.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/desktop/view/window/Window.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
 #include <hyprland/src/output/Monitor.hpp>
@@ -48,8 +48,8 @@ CMilSpecDecoration* milspecFrameFor(const PHLWINDOW& w) {
 // before.
 static CFunctionHook* g_visibleRegionHook = nullptr;
 static CFunctionHook* g_opaqueRegionHook  = nullptr;
-using visibleRegionFn                     = CRegion (*)(CSurfacePassElement*, bool&);
-using opaqueRegionFn                      = CRegion (*)(CSurfacePassElement*);
+using visibleRegionFn                     = CRegion (*)(CSurfacePassElement*, Render::CRenderContext&, bool&);
+using opaqueRegionFn                      = CRegion (*)(CSurfacePassElement*, Render::CRenderContext&);
 
 // rows of pixels of window box `wb` whose centre lies past a 45 deg cut of
 // `legs` px at the top-left / bottom-right corner. Pixel (i, j) from the
@@ -106,8 +106,8 @@ static CRegion cornerCut(const CSurfacePassElement::SRenderData& D, const PHLMON
 }
 
 // same ABI as the members: hidden return slot, `this`, then the arguments
-static CRegion hkVisibleRegion(CSurfacePassElement* self, bool& cancel) {
-    CRegion r = reinterpret_cast<visibleRegionFn>(g_visibleRegionHook->m_original)(self, cancel);
+static CRegion hkVisibleRegion(CSurfacePassElement* self, Render::CRenderContext& ctx, bool& cancel) {
+    CRegion r = reinterpret_cast<visibleRegionFn>(g_visibleRegionHook->m_original)(self, ctx, cancel);
     if (cancel)
         return r;
 
@@ -134,8 +134,8 @@ static CRegion hkVisibleRegion(CSurfacePassElement* self, bool& cancel) {
     return r;
 }
 
-static CRegion hkOpaqueRegion(CSurfacePassElement* self) {
-    CRegion r = reinterpret_cast<opaqueRegionFn>(g_opaqueRegionHook->m_original)(self);
+static CRegion hkOpaqueRegion(CSurfacePassElement* self, Render::CRenderContext& ctx) {
+    CRegion r = reinterpret_cast<opaqueRegionFn>(g_opaqueRegionHook->m_original)(self, ctx);
     if (r.empty())
         return r;
 
@@ -288,13 +288,13 @@ static void addDeco(const PHLWINDOW& w) {
     if (!w || g_decos.contains(w.get()))
         return;
 
-    auto deco        = makeUnique<CMilSpecDecoration>(w);
+    auto deco        = makeShared<CMilSpecDecoration>(w);
     g_decos[w.get()] = deco.get();
 
     // shadow first: both sit on the OVER layer, which renders in insertion
     // order, and the frame's stroke must land on top so the shadow's
     // antialiased cut-out edge never dims the chamfer's boundary pixels
-    auto shadow        = makeUnique<CMilSpecShadowDecoration>(w);
+    auto shadow        = makeShared<CMilSpecShadowDecoration>(w);
     g_shadows[w.get()] = shadow.get();
     HyprlandAPI::addWindowDecoration(PHANDLE, w, std::move(shadow));
 

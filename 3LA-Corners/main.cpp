@@ -6,7 +6,7 @@
 
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/desktop/view/window/Window.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/render/decorations/DecorationPositioner.hpp>
@@ -36,7 +36,7 @@ static void addDeco(const PHLWINDOW& w, bool flash = false) {
     if (!w || g_decos.contains(w.get()))
         return;
 
-    auto deco        = makeUnique<CCornersDecoration>(w, flash);
+    auto deco        = makeShared<CCornersDecoration>(w, flash);
     g_decos[w.get()] = deco.get();
     HyprlandAPI::addWindowDecoration(PHANDLE, w, std::move(deco));
     g_pHyprRenderer->damageWindow(w);

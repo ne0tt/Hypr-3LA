@@ -5,21 +5,25 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <format>
 #include <regex>
 
 #include <hyprland/src/desktop/state/FocusState.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
-#include <hyprland/src/desktop/Workspace.hpp>
+#include <hyprland/src/desktop/view/window/Window.hpp>
+#include <hyprland/src/desktop/view/window/WindowBackend.hpp>
+#include <hyprland/src/desktop/view/window/WindowMetadata.hpp>
+#include <hyprland/src/desktop/view/window/WindowPresentation.hpp>
+#include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopTimer.hpp>
 #include <hyprland/src/output/Monitor.hpp>
-#include <hyprland/src/protocols/XDGShell.hpp>
-#include <hyprland/src/protocols/XDGDialog.hpp>
 #include <hyprland/src/debug/log/Logger.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
+#include <hyprland/src/render/Context.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/render/Shader.hpp>
 #include <hyprland/src/render/Texture.hpp>
+#include <hyprland/src/render/WindowRenderPresentation.hpp>
 #include <hyprland/src/render/pass/RectPassElement.hpp>
 #include <hyprland/src/render/pass/TexPassElement.hpp>
 
@@ -210,11 +214,11 @@ bool CGlitchCloseManager::beginEffect(const PHLWINDOW& w) {
         return false;
     }
     if (!Desktop::View::validMapped(w)) {
-        Log::logger->log(Log::TRACE, "[3LA-GlitchClose] skip: not validMapped class='{}'", w->m_class);
+        Log::logger->log(Log::TRACE, std::format("[3LA-GlitchClose] skip: not validMapped class='{}'", w->metadata().appID()));
         return false;
     }
-    if (w->isX11OverrideRedirect()) {
-        Log::logger->log(Log::TRACE, "[3LA-GlitchClose] skip: X11 override-redirect class='{}'", w->m_class);
+    if (w->backend().traits().overrideRedirect) {
+        Log::logger->log(Log::TRACE, std::format("[3LA-GlitchClose] skip: X11 override-redirect class='{}'", w->metadata().appID()));
         return false;
     }
 
@@ -222,29 +226,27 @@ bool CGlitchCloseManager::beginEffect(const PHLWINDOW& w) {
     // over that window would stack a second overlay on the same box
     for (const auto& E : m_effects) {
         if (E.window.lock() == w) {
-            Log::logger->log(Log::TRACE, "[3LA-GlitchClose] skip: effect already playing class='{}'", w->m_class);
+            Log::logger->log(Log::TRACE, std::format("[3LA-GlitchClose] skip: effect already playing class='{}'", w->metadata().appID()));
             return false;
         }
     }
 
     // child windows (file open/save dialogs etc.): parent() covers xdg-toplevel
-    // parents (incl. xdg-foreign) and X11 transient-for, isModal() the X11
-    // modal hint, m_dialog the xdg-dialog-v1 modal flag
+    // parents (incl. xdg-foreign) and X11 transient-for, traits().modal the X11
+    // modal hint and the xdg-dialog-v1 modal flag
     if (g_ignoreChildren->value() > 0) {
-        if (w->parent() || w->isModal())
-            return false;
-        if (!w->m_isX11 && w->m_xdgSurface && w->m_xdgSurface->m_toplevel && w->m_xdgSurface->m_toplevel->m_dialog && w->m_xdgSurface->m_toplevel->m_dialog->modal)
+        if (w->backend().parent() || w->backend().traits().modal)
             return false;
     }
 
     // portal file choosers (VS Code / Electron / Flatpak "Open File" dialogs)
     // live in a separate process and mostly never get parented on Wayland —
-    // catch them by class/title instead. the CACHED m_class/m_title, not
-    // fetchClass()/fetchTitle(): the close event fires from unmapWindow(),
-    // when the xdg toplevel resource the fetchers read may already be gone
-    if (matches(m_ignoreClassRe, m_ignoreClassPattern, g_ignoreClass->value(), w->m_class.empty() ? w->fetchClass() : w->m_class))
+    // catch them by class/title instead. the CACHED metadata(), not
+    // backend().metadata(): the close event fires from unmapWindow(), when the
+    // xdg toplevel resource the backend reads may already be gone
+    if (matches(m_ignoreClassRe, m_ignoreClassPattern, g_ignoreClass->value(), w->metadata().appID().empty() ? w->backend().metadata().appID : w->metadata().appID()))
         return false;
-    if (matches(m_ignoreTitleRe, m_ignoreTitlePattern, g_ignoreTitle->value(), w->m_title.empty() ? w->fetchTitle() : w->m_title))
+    if (matches(m_ignoreTitleRe, m_ignoreTitlePattern, g_ignoreTitle->value(), w->metadata().title().empty() ? w->backend().metadata().title : w->metadata().title()))
         return false;
 
     const auto MON = w->m_monitor.lock();
@@ -255,16 +257,15 @@ bool CGlitchCloseManager::beginEffect(const PHLWINDOW& w) {
     if (SIZE.x < g_minSize->value() || SIZE.y < g_minSize->value())
         return false;
 
-    Vector2D pos = w->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT) + w->m_floatingOffset;
-    if (w->m_workspace)
-        pos = pos + w->m_workspace->m_renderOffset->value();
+    const auto     PRESENTATION = w->presentation().renderPresentation();
+    const Vector2D pos          = w->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT) + PRESENTATION.floatingOffset + PRESENTATION.workspaceOffset;
 
     // Stay strictly INSIDE the border, so the window keeps a clean border ring
     // framing the collapse and no border pixel is ever fed through the shader.
     // Without the inset the effect box sits flush against the border and edge
     // sampling (linear filtering at the 0..1 boundary) drags border colour into
     // the glitch, which shows up as a bright 1px frame around the effect.
-    const double BORDER = static_cast<double>(std::max<int64_t>(w->getRealBorderSize(), 0));
+    const double BORDER = static_cast<double>(std::max<int64_t>(w->presentation().borderSize(), 0));
     CBox         global = CBox{pos, SIZE}.expand(-BORDER);
     if (global.w < 1.0 || global.h < 1.0)
         return false;
@@ -297,7 +298,7 @@ bool CGlitchCloseManager::beginEffect(const PHLWINDOW& w) {
     setNoAnim(e.window, true);
     e.noAnimSet = true;
 
-    Log::logger->log(Log::DEBUG, "[3LA-GlitchClose] glitch on class='{}' title='{}'", w->m_class, w->m_title);
+    Log::logger->log(Log::DEBUG, std::format("[3LA-GlitchClose] glitch on class='{}' title='{}'", w->metadata().appID(), w->metadata().title()));
 
     m_effects.emplace_back(std::move(e));
     g_pHyprRenderer->damageBox(global);
@@ -349,7 +350,7 @@ SDispatchResult CGlitchCloseManager::dispatchClose() {
 }
 
 void CGlitchCloseManager::onWindowClose(const PHLWINDOW& w) {
-    Log::logger->log(Log::TRACE, "[3LA-GlitchClose] window.close received, class='{}'", w ? w->m_class : "<null>");
+    Log::logger->log(Log::TRACE, std::format("[3LA-GlitchClose] window.close received, class='{}'", w ? w->metadata().appID() : "<null>"));
     // Drop dead refs and, if this close was one we initiated, swallow it — its
     // effect has been playing since the dispatcher fired.
     //
@@ -380,13 +381,15 @@ void CGlitchCloseManager::onWindowClose(const PHLWINDOW& w) {
         beginEffect(w);
 }
 
-void CGlitchCloseManager::onRenderStage(eRenderStage stage) {
-    if (stage != RENDER_POST_WINDOWS || m_effects.empty())
+void CGlitchCloseManager::onRenderStage(const Event::SRenderStageEvent& ev) {
+    if (ev.stage != RENDER_POST_WINDOWS || m_effects.empty() || !ev.context)
         return;
 
-    const auto MON = g_pHyprRenderer->renderData().pMonitor.lock();
+    const auto MON = ev.monitor;
     if (!MON)
         return;
+
+    auto& ctx = ev.context->get();
 
     const auto NOW = std::chrono::steady_clock::now();
     const auto T   = timing();
@@ -438,8 +441,8 @@ void CGlitchCloseManager::onRenderStage(eRenderStage stage) {
             // don't paint over a workspace the closed window was never on
             const auto WS = it->workspace.lock();
             if ((!WS || MON->m_activeWorkspace == WS || MON->m_activeSpecialWorkspace == WS) && ensureShader() && ensureTarget(*it, MON)) {
-                renderToTarget(*it, MON, ELAPSED, T.duration, ENV);
-                drawEffect(*it, MON, ELAPSED, T.duration, ENV);
+                renderToTarget(ctx, *it, MON, ELAPSED, T.duration, ENV);
+                drawEffect(ctx, *it, MON, ELAPSED, T.duration, ENV);
             }
 
             // keep the animation running until the effect expires
@@ -560,7 +563,7 @@ void CGlitchCloseManager::buildUV(SEffect& e, const PHLMONITOR& mon, const SP<Re
 // so none of Hyprland's private projection state is needed. Every piece of
 // global GL state touched here is put back before returning: CRenderPass::render()
 // runs later in this same frame and assumes it owns the context.
-void CGlitchCloseManager::renderToTarget(SEffect& e, const PHLMONITOR& MON, double elapsedMs, double durationMs, float env) {
+void CGlitchCloseManager::renderToTarget(Render::CRenderContext& ctx, SEffect& e, const PHLMONITOR& MON, double elapsedMs, double durationMs, float env) {
     if (!MON || !e.target || !m_shader)
         return;
 
@@ -577,11 +580,11 @@ void CGlitchCloseManager::renderToTarget(SEffect& e, const PHLMONITOR& MON, doub
     const CHyprColor F2 = colorOr(g_fringe2, CHyprColor{0.F, 0.9F, 1.F, 1.F});
 
     const Vector2D   FBSIZE = e.target->m_size;
-    Vector2D         prevViewport = g_pHyprRenderer->renderData().fbSize;
+    Vector2D         prevViewport = ctx.m_data.fbSize;
     if (prevViewport.x < 1.0 || prevViewport.y < 1.0)
         prevViewport = MON->m_pixelSize;
 
-    auto guard = g_pHyprRenderer->bindTempFB(e.target);
+    auto guard = g_pHyprRenderer->bindTempFB(ctx, e.target);
 
     g_pHyprRenderer->setViewport(0, 0, FBSIZE.x, FBSIZE.y);
     g_pHyprRenderer->disableScissor();
@@ -630,7 +633,7 @@ void CGlitchCloseManager::renderToTarget(SEffect& e, const PHLMONITOR& MON, doub
     // per element, so the disabled scissor does not need restoring
 }
 
-void CGlitchCloseManager::drawEffect(const SEffect& e, const PHLMONITOR& mon, double elapsedMs, double durationMs, float env) {
+void CGlitchCloseManager::drawEffect(Render::CRenderContext& ctx, const SEffect& e, const PHLMONITOR& mon, double elapsedMs, double durationMs, float env) {
     const auto TEX = e.target ? e.target->getTexture() : nullptr;
     if (!TEX)
         return;
@@ -648,9 +651,9 @@ void CGlitchCloseManager::drawEffect(const SEffect& e, const PHLMONITOR& mon, do
     // the finished effect a further 90 degrees inside its box. It is a no-op on
     // an untransformed monitor, so dropping it changes nothing there.
     d.damage       = CRegion{d.box};
-    g_pHyprRenderer->m_renderPass.add(makeUnique<CTexPassElement>(d));
+    g_pHyprRenderer->addPassElement(ctx, makeUnique<CTexPassElement>(d));
 
-    drawCaption(e.localBox, mon, elapsedMs, durationMs, env);
+    drawCaption(ctx, e.localBox, mon, elapsedMs, durationMs, env);
 }
 
 // Cached glyph texture. renderText needs a live GL context, so this is only
@@ -669,7 +672,7 @@ SP<Render::ITexture> CGlitchCloseManager::textTexture() {
 
 // A plate and a caption drawn OVER the shader output -- deliberately not fed
 // through the glitch, so it stays legible while everything behind it tears.
-void CGlitchCloseManager::drawCaption(const CBox& box, const PHLMONITOR& mon, double elapsedMs, double durationMs, float env) {
+void CGlitchCloseManager::drawCaption(Render::CRenderContext& ctx, const CBox& box, const PHLMONITOR& mon, double elapsedMs, double durationMs, float env) {
     if (g_text->value().empty())
         return;
 
@@ -707,7 +710,7 @@ void CGlitchCloseManager::drawCaption(const CBox& box, const PHLMONITOR& mon, do
         rd.box   = scaled(BG);
         rd.color = CHyprColor{static_cast<float>(C.r), static_cast<float>(C.g), static_cast<float>(C.b), BGA};
         rd.round = static_cast<int>(std::max<int64_t>(0, g_textBgRound->value()));
-        g_pHyprRenderer->m_renderPass.add(makeUnique<CRectPassElement>(rd));
+        g_pHyprRenderer->addPassElement(ctx, makeUnique<CRectPassElement>(rd));
     }
 
     const float TA = unit(g_textAlpha) * env;
@@ -717,6 +720,6 @@ void CGlitchCloseManager::drawCaption(const CBox& box, const PHLMONITOR& mon, do
         td.box    = scaled(TB);
         td.a      = TA;
         td.damage = CRegion{td.box};
-        g_pHyprRenderer->m_renderPass.add(makeUnique<CTexPassElement>(td));
+        g_pHyprRenderer->addPassElement(ctx, makeUnique<CTexPassElement>(td));
     }
 }

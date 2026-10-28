@@ -14,7 +14,7 @@ class CCornersDecoration : public IHyprWindowDecoration {
 
     virtual SDecorationPositioningInfo getPositioningInfo();
     virtual void                       onPositioningReply(const SDecorationPositioningReply& reply);
-    virtual void                       draw(PHLMONITOR pMonitor, float const& a);
+    virtual void                       draw(Render::CRenderContext& ctx, PHLMONITOR pMonitor, float const& a, const Render::SWindowRenderPresentation& presentation);
     virtual eDecorationType            getDecorationType();
     virtual void                       updateWindow(PHLWINDOW pWindow);
     virtual void                       damageEntire();
@@ -45,7 +45,7 @@ class CCornersDecoration : public IHyprWindowDecoration {
     std::array<CBox, 8> cornerBoxes(const Vector2D& pos, const Vector2D& size, double outerDist, double topExtra) const;
     std::array<CBox, 4> lineBoxes(const Vector2D& pos, const Vector2D& size, double outerDist, double topExtra) const;
     double              extraTopReserved() const;
-    void                drawGlow(const CBox& box, const CHyprColor& color, float alpha) const;
+    void                drawGlow(Render::CRenderContext& ctx, const CBox& box, const CHyprColor& color, float alpha) const;
     void                flash(eFlashKind kind, int count, int duration);
     bool                flashExpired() const;
     float               flashMultiplier();

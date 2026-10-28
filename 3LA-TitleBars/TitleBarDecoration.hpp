@@ -16,7 +16,7 @@ class CTitleBarDecoration : public IHyprWindowDecoration {
 
     virtual SDecorationPositioningInfo getPositioningInfo();
     virtual void                       onPositioningReply(const SDecorationPositioningReply& reply);
-    virtual void                       draw(PHLMONITOR pMonitor, float const& a);
+    virtual void                       draw(Render::CRenderContext& ctx, PHLMONITOR pMonitor, float const& a, const Render::SWindowRenderPresentation& presentation);
     virtual eDecorationType            getDecorationType();
     virtual void                       updateWindow(PHLWINDOW pWindow);
     virtual void                       damageEntire();
@@ -40,7 +40,7 @@ class CTitleBarDecoration : public IHyprWindowDecoration {
 
     // cheap layered-rect shadow behind the bar's own box, independent of
     // Hyprland's core window shadow (see drawShadow's own comment for why)
-    void drawShadow(const CBox& scaledBox, float barAlpha) const;
+    void drawShadow(Render::CRenderContext& ctx, const CBox& scaledBox, float barAlpha) const;
 
     PHLWINDOWREF          m_window;
     bool                  m_toggledOff = false;

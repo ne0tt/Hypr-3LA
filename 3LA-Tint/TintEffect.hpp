@@ -13,8 +13,13 @@
 class CShader;
 
 namespace Render {
+    class CRenderContext;
     class IFramebuffer;
     class ITexture;
+}
+
+namespace Event {
+    struct SRenderStageEvent;
 }
 
 // One surface (main, subsurface or popup) of a matched window, in
@@ -41,10 +46,10 @@ struct STintBox {
 // windows, layers -- stays on top and untinted.
 class CTintManager {
   public:
-    void onRenderStage(eRenderStage stage);
+    void onRenderStage(const Event::SRenderStageEvent& ev);
     void onConfigReloaded();
     void reset();
-    void drawBoxes(const std::vector<STintBox>& boxes);
+    void drawBoxes(Render::CRenderContext& ctx, const std::vector<STintBox>& boxes);
 
   private:
     bool        matches(const PHLWINDOW& w) const;
@@ -76,11 +81,11 @@ class CTintPassElement : public IPassElement {
     explicit CTintPassElement(std::vector<STintBox>&& boxes) : m_boxes(std::move(boxes)) {}
     virtual ~CTintPassElement() = default;
 
-    virtual std::vector<UP<IPassElement>> draw();
-    virtual bool                          needsLiveBlur() {
+    virtual std::vector<UP<IPassElement>> draw(Render::CRenderContext& ctx);
+    virtual bool                          needsLiveBlur(Render::CRenderContext&) {
         return false;
     }
-    virtual bool needsPrecomputeBlur() {
+    virtual bool needsPrecomputeBlur(Render::CRenderContext&) {
         return false;
     }
     virtual const char* passName() {
@@ -91,13 +96,13 @@ class CTintPassElement : public IPassElement {
     }
     // no bounding box + undiscardable: simplify() must never cull the tint,
     // drawBoxes() clips to damage itself
-    virtual std::optional<CBox> boundingBox() {
+    virtual std::optional<CBox> boundingBox(Render::CRenderContext&) {
         return std::nullopt;
     }
-    virtual bool undiscardable() {
+    virtual bool undiscardable(Render::CRenderContext&) {
         return true;
     }
-    virtual CRegion opaqueRegion() {
+    virtual CRegion opaqueRegion(Render::CRenderContext&) {
         return {};
     }
 
