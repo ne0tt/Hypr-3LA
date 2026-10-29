@@ -27,12 +27,11 @@ void main() {
 // that way whatever transform the monitor is on.
 //
 // uvOffset/uvXf map that local uv onto the snapshot texture: makeSnapshotFB
-// hands back a monitor-sized framebuffer rendered through the monitor's own
-// projection, so on a rotated (portrait) monitor the window's pixels sit
-// ROTATED inside it. uvXf is the full 2x2 of that mapping -- rotation and flips
-// included -- not just a scale, so the glitch keeps tearing across the window
-// instead of down it. The framebuffer itself is stored top-down, matching the
-// uv convention above, so no y flip is involved.
+// hands back a monitor-sized framebuffer in the monitor's logical orientation,
+// so the window's pixels sit upright inside it at their logical position, even
+// on a rotated (portrait) monitor. uvXf is a full 2x2 so any affine map fits;
+// today it only carries the box's scale. The framebuffer itself is stored
+// top-down, matching the uv convention above, so no y flip is involved.
 inline const std::string GLITCH_FRAG = R"#(#version 300 es
 
 precision highp float;
@@ -44,7 +43,7 @@ uniform sampler2D tex;
 uniform float hasTex;       // 0.0 = capture failed, synthesise everything
 
 uniform vec2  uvOffset;     // local uv (0,0) in `tex`
-uniform mat2  uvXf;         // local uv basis in `tex`, carries the monitor transform
+uniform mat2  uvXf;         // local uv basis in `tex`
 uniform vec2  resolution;   // this framebuffer, in px
 
 uniform float progress;     // 0..1 over the burst, keeps climbing in the fade tail

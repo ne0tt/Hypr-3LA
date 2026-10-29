@@ -1,10 +1,9 @@
 # 3LA-TitleBars
 
-Draws a solid-colour bar of `height` pixels above every window's top edge,
-with the window's own title rendered on it. The space is *reserved*, like a
-real title bar: the window's content is pushed down by
-`height + gap.top + gap.bottom` and the bar sits above it rather than
-painting over the app's own top pixels.
+Draws a solid-colour bar above every window's top edge, with the window's own
+title rendered on it. The space is *reserved*, like a real title bar: the
+window's content is pushed down by `height + gap.top + gap.bottom` and the bar
+sits above it rather than painting over the app's own top pixels.
 
 ![3LA-TitleBars](../assets/titlebars.png)
 
@@ -29,15 +28,21 @@ Part of [Hypr-3LA](../README.md).
 ## Build and load
 
 Requires Hyprland 0.57.0 headers (see the [main README](../README.md#requirements)).
-Works on both the GL and Vulkan renderers.
+Draws only through Hyprland's renderer API (rect/texture pass elements and
+`renderText`), with no raw GL calls.
 
 ```sh
 make                                              # → 3LA-TitleBars.so
 hyprctl plugin load "$PWD/3LA-TitleBars.so"       # absolute path required
 ```
 
-Or via hyprpm: `hyprpm enable 3LA-TitleBars`. Rebuild after every Hyprland
-update.
+At startup, `hl.plugin.load("/abs/path/to/3LA-TitleBars.so")` in
+`hyprland.lua` (see [Loading at startup](../README.md#loading-at-startup-lua-config)),
+or via hyprpm: `hyprpm enable 3LA-TitleBars`. Rebuild after every Hyprland
+update (`make clean && make`, since plain `make` doesn't track the Hyprland
+headers, or `./rebuild-plugins.sh` at the repo root, which keeps the previous
+`.so` if a build fails): a build for a different Hyprland commit
+refuses to load.
 
 ## Config
 
@@ -47,28 +52,28 @@ Defaults shown:
 hl.config({ plugin = { ["3la_titlebars"] = {
     enabled = 1,             -- 0 = off: no bars and no reserved space, applied
                              -- live (windows snap back to their plain geometry)
-    height = 24,             -- bar height (px)
-    gap = 7,                 -- gap (px) above the bar
+    height = 24,             -- bar height (px, >= 1); painted 4 px taller, see Notes
+    gap = 7,                 -- gap (px, >= 0) above the bar while gap.top = -1
     ["gap.top"] = -1,        -- gap (px) above the bar (-1 = use gap)
-    ["gap.bottom"] = 7,      -- gap (px) between the bar and the window underneath
+    ["gap.bottom"] = 7,      -- gap (px, >= 0) between the bar and the window underneath
 
     ["col.active"] = "rgba(690005ff)",  -- focused-window bar color
     ["col.inactive"] = 0,               -- unfocused-window bar color.
                                         -- 0 = follow col.active
 
     ["opacity.active"] = 1.0,   -- opacity (0..1) of the bar, its text and its
-    ["opacity.inactive"] = 1.0, -- shadow -- mirrors decoration:active_opacity/
-                                -- inactive_opacity, since the bar otherwise
-                                -- ignores the renderer's own opacity multiplier
+    ["opacity.inactive"] = 1.0, -- shadow: the bar's own stand-in for
+                                -- decoration:active_opacity/inactive_opacity,
+                                -- which it ignores
 
     shadow = 1,                    -- soft shadow behind the bar (0 = off).
                                    -- also off whenever decoration:shadow:enabled
                                    -- is false
-    ["shadow.size"] = 20,          -- spread distance (px)
+    ["shadow.size"] = 20,          -- spread distance (device px, >= 0)
     ["shadow.strength"] = 0.5,     -- overall intensity (0..1)
     ["shadow.col"] = "rgba(000000aa)", -- translucent black
 
-    ["text.size"] = 12,                     -- title font size (px)
+    ["text.size"] = 12,                     -- title font size (px, >= 1)
     ["text.font"] = "",                     -- title font family (empty = follow misc:font_family)
     ["text.col.active"] = "rgba(ffffffff)", -- title text color, focused window
     ["text.col.inactive"] = 0,              -- title text color, unfocused window.
@@ -81,6 +86,10 @@ hl.config({ plugin = { ["3la_titlebars"] = {
 } } })
 ```
 
+Out-of-range values are rejected with a config error, not clamped.
+`ignore_class` / `ignore_title` are C++ `std::regex` (ECMAScript) *searches*,
+not full matches, so anchor with `^...$`. An invalid one is silently ignored.
+
 Live-tweak and inspect:
 
 ```sh
@@ -91,10 +100,9 @@ hyprctl getoption plugin:3la_titlebars:height
 ## Custom titles
 
 `title_rules` overrides the text shown on the bar without touching the
-window's real title (used elsewhere for matching, alt-tab, etc.). It packs a
-list of rules into one string, since a plugin-defined repeatable keyword (the
-`windowrulev2`-style approach) has no path in from `hl.config`'s Lua bridge —
-only typed config *values* do:
+window's real title (used elsewhere for matching, alt-tab, etc., and by
+`ignore_title`). It packs a list of rules into one string, since a plugin can
+register typed config values but not a repeatable rule keyword:
 
 ```lua
 -- 'class_regex,title_regex,override text' rules, separated by ';'.
@@ -104,13 +112,16 @@ title_rules = "^(firefox)$,,WEB BROWSER;^(kitty)$,^(btop)$,SYSTEM MONITOR",
 
 A window whose class matches `^(firefox)$` (any title) shows "WEB BROWSER"; a
 `kitty` window whose title matches `^(btop)$` shows "SYSTEM MONITOR"; every
-other window keeps its own (uppercased) title.
+other window keeps its own title. Override text is uppercased like any title.
 
 - **All 3 fields are required.** Only the first two commas split fields, so
-  the override text may contain commas. A 2-field shorthand like
-  `^(btop)$,SYSTEM MONITOR` is read as a *class* regex with no override and
-  skipped; leave the class empty instead: `,^(btop)$,SYSTEM MONITOR`.
-- **Regexes are searches**, not full matches — anchor with `^...$`.
+  the override text may contain commas. A rule with fewer than two commas,
+  like `^(btop)$,SYSTEM MONITOR`, is skipped; for a title-only rule leave the
+  class empty: `,^(btop)$,SYSTEM MONITOR`.
+- **One leading space** is dropped from the title regex and the override
+  text. The class regex is used as written, so don't put a space after `;`.
+- **Regexes are searches** (`std::regex`, ECMAScript), not full matches —
+  anchor with `^...$`.
 - **Bad rules are skipped individually** (missing field, invalid regex) with
   an in-session notification naming the rule and why.
 - Re-parsed only when the string changes.
@@ -121,23 +132,19 @@ drive both.
 
 ## Toggling a bar per-window
 
-`3la_titlebars:toggle` flips the bar on the currently **focused** window only
-(independent of `ignore_class` / `ignore_title`, reversible). Exposed two
-ways:
+`hl.plugin.titlebars.toggle()` flips the bar on the currently **focused**
+window only; its reserved space follows. It is reversible, but can only hide
+a bar: an `ignore_class` / `ignore_title` match still wins. The per-window
+state resets when the plugin is reloaded.
 
 ```lua
--- classic dispatch string (hyprland.conf-style bind)
-bind = SUPER SHIFT, B, 3la_titlebars:toggle
-
--- Lua keybind (hl.plugin.titlebars only exists while the plugin is loaded, hence the pcall)
+-- hl.plugin.titlebars only exists while the plugin is loaded, hence the pcall
 hl.bind("SUPER + SHIFT + B", function()
     pcall(function() hl.plugin.titlebars.toggle() end)
 end, { description = "Toggle title bar on active window" })
 ```
 
-`hyprctl dispatch 3la_titlebars:toggle` does **not** work on a Lua-parsed
-config (`hyprctl dispatch` evaluates its argument as Lua) — use
-`hyprctl eval 'hl.plugin.titlebars.toggle()'` for one-off testing.
+For one-off testing: `hyprctl eval 'hl.plugin.titlebars.toggle()'`.
 
 ## Example config
 
@@ -185,32 +192,43 @@ pcall(hl.config, {
 ## Notes
 
 - The bar is *reserved* space: tiled windows shrink by
-  `height + gap.top + gap.bottom`. The bar is inset by `gap.top` above and
-  `gap.bottom` below within that slot, so it floats with a margin.
+  `height + gap.top + gap.bottom`. Within that slot the bar starts `gap.top`
+  below the top and is painted `height + 4` px tall, so the visible gap under
+  it is `gap.bottom - 4`. With `gap.bottom` under 4 it overlaps whatever sits
+  below the slot (normally the window's border).
 - The bar is always exactly as wide as the window, flush with the outer edges
   of its border, whatever other decorations reserve around it.
+- The title is left-aligned 8 px in from the bar's edge, ellipsised to fit the
+  bar minus 8 px each side, and vertically centred. The 8 px padding is in
+  device pixels; the font size is `text.size` × the monitor's scale.
 - The title text is rendered to a texture and cached per window; it is only
-  re-rendered when the title, colour, font, size or available width change,
-  and repainted immediately on a `window.title` event. Text is ellipsised to
-  fit the bar minus 8 px padding each side, and vertically centred.
+  re-rendered when the text, configured colour, font, size or available width
+  change, and repainted immediately on a `window.title` event.
 - The title is uppercased (ASCII letters only — accents and icon glyphs pass
   through untouched).
 - The window's own drop shadow hugs the core border, not the bar: the
   decoration deliberately leaves `DECORATION_PART_OF_MAIN_WINDOW` off.
-- The bar's own `shadow` is a separate effect — a plugin can't reach
-  Hyprland's shadow shader, so it is 6 stacked, expanded, fading-alpha copies
-  of the bar's box (a stepped halo, not a smooth blur). Turning off
-  `decoration:shadow:enabled` also turns off the bar's shadow; `shadow = 0`
-  disables just the bar's.
-- Fullscreen windows never get a bar.
+- The bar's own `shadow` is a separate effect, not Hyprland's shadow
+  renderer: 5 stacked copies of the bar's box, expanded by up to 5/6 of
+  `shadow.size` with alpha fading outward (a stepped halo, not a smooth
+  blur). `shadow.size` is in device pixels, not multiplied by the monitor's
+  scale. Turning off `decoration:shadow:enabled` also turns off the bar's
+  shadow; `shadow = 0` disables just the bar's.
+- Fullscreen and maximized windows draw no bar. A maximized window still keeps
+  its reserved strip, left empty.
 - Closing a window never leaves its bar on screen, including clients that
   exit on their own.
 - `ignore_class` / `ignore_title` opt windows out entirely (no bar, no
-  reserved space). Re-evaluated live on title/class changes and config
-  reload.
-- The bar and text ignore the renderer's opacity multiplier: only the
-  configured colours' alpha, scaled by `opacity.active` / `opacity.inactive`,
-  controls them.
+  reserved space). Re-evaluated live on title/class changes, config reload
+  and any `hl.config` change.
+- The bar, text and shadow ignore the renderer's opacity multiplier (window
+  opacity, `decoration:active_opacity` / `inactive_opacity`, fade alpha). The
+  bar's alpha is the configured colour's alpha × `opacity.active` /
+  `opacity.inactive`; the text and shadow are multiplied by that bar alpha, so
+  a fully transparent bar hides its text too.
+- A colour of exactly `0` (`rgba(00000000)`) means unset: `col.inactive` and
+  `text.col.inactive` follow their active colour, `col.active` falls back to
+  opaque red and `text.col.active` to white.
 - **With 3LA-Corners**, the top brackets frame the outside of the bar.
   **With 3LA-MilSpec**, the bar is stacked outside the frame and the frame
   grows to enclose it — but that gives two title bars if MilSpec's own is on.

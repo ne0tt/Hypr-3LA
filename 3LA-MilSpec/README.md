@@ -12,7 +12,8 @@ frame's top edge and the window, showing the window's title in uppercase.
 
 ![3LA-MilSpec without title bar](../assets/milspec-no-titlebar.png)
 
-*Without title bar: both corners cut via the corner covers.*
+*Without title bar: the window's own top-left and bottom-right corners are cut
+to match.*
 
 The frame (plus the optional background fill, the window corner covers, and
 the bar's fill so it follows the top-left cut) is drawn with cairo into one
@@ -38,7 +39,8 @@ Part of [Hypr-3LA](../README.md).
 ## Build and load
 
 Requires Hyprland 0.57.0 headers (see the [main README](../README.md#requirements)).
-This is the only plugin that links an extra library, `libcairo`, which
+Built with `g++ -std=c++26` against `pkg-config` `hyprland pixman-1 libdrm
+cairo`. This is the only plugin that links an extra library, `libcairo`, which
 Hyprland itself already depends on.
 
 ```sh
@@ -46,12 +48,32 @@ make                                              # → 3LA-MilSpec.so
 hyprctl plugin load "$PWD/3LA-MilSpec.so"         # absolute path required
 ```
 
-Or via hyprpm: `hyprpm enable 3LA-MilSpec`. Rebuild after every Hyprland
-update. Only tested on the GL renderer.
+`../rebuild-plugins.sh` cleans and rebuilds every plugin; one whose build
+fails keeps its previous `.so`. Or via hyprpm: `hyprpm enable 3LA-MilSpec`.
+
+Load at startup from `hyprland.lua` with
+`hl.plugin.load("/path/to/Hypr-3LA/3LA-MilSpec/3LA-MilSpec.so")`.
+`autoload.sh` is an optional `hyprland.start` fallback: it loads the `.so` only
+if it is not loaded yet, then re-runs `~/.config/hypr/config/plugins.lua`
+through `hyprctl eval`.
+
+Rebuild after every Hyprland update with `make clean && make` (the Makefile
+only tracks the plugin's own sources, so a plain `make` reports "up to date")
+or `../rebuild-plugins.sh`. A build for a different Hyprland refuses to load
+and shows a version-mismatch notification.
+
+No direct GL calls: everything is drawn as renderer pass elements
+(`CTexPassElement`) from textures built with cairo or on the CPU and uploaded
+through `g_pHyprRenderer->createTexture`. The title text comes from
+`g_pHyprRenderer->renderText`.
 
 ## Config
 
-Defaults shown:
+Defaults shown. Registered ranges: on/off switches 0–1; `offset`, `chamfer`,
+`titlebar.offset`, `titlebar.gap` ≥ 0; `thickness`, `titlebar.height`,
+`text.size`, `shadow.range` ≥ 1; `corners.size`, `titlebar.offset.*` ≥ -1;
+`shadow.render_power` 1–4; `titlebar.opacity.*`, `shadow.scale` 0–1. A value
+outside its range is rejected with a config error, not clamped.
 
 ```lua
 hl.config({ plugin = { ["3la_milspec"] = {
@@ -66,7 +88,8 @@ hl.config({ plugin = { ["3la_milspec"] = {
     thickness = 2,        -- frame stroke width (px)
     chamfer = 15,         -- leg length (px) of the 45° cut on the top-left and
                           -- bottom-right corners, measured on the frame's
-                          -- outer edge (0 = square corners)
+                          -- outer edge (0 = square corners); clamped to half
+                          -- the frame's shorter side
 
     ["col.active"] = 0,   -- focused-window frame color.
                           -- 0 = follow general:col.active_border (first color);
@@ -78,11 +101,12 @@ hl.config({ plugin = { ["3la_milspec"] = {
                             -- under the title bar and stroke. 0 = transparent;
                             -- the color's own alpha applies, e.g. "rgba(0a141c99)"
 
-    corners = 1,               -- cut the window's own corners like the frame:
-                               -- bottom-right always, top-left only when the
-                               -- window has no title bar (0 = off). The part past
-                               -- the stroke is clipped from the client; inside
-                               -- the frame a painted cover fills the gap.
+    corners = 1,               -- cut the window's own top-left and bottom-right
+                               -- corners like the frame (0 = off): clipped from
+                               -- the client past the frame's outer edge, painted
+                               -- over inside it. With a title bar the top-left
+                               -- only cuts where the chamfer reaches below the
+                               -- bar. See "Window corner covers".
     ["corners.size"] = -1,     -- painted cover inside the frame. -1 = auto: a
                                -- band `offset` wide along the inside of the
                                -- chamfer; >= 0 = leg length (px), 0 = no cover
@@ -99,10 +123,11 @@ hl.config({ plugin = { ["3la_milspec"] = {
     ["titlebar.gap"] = 4,      -- gap (px) between the bottom of the bar and
                                -- the window's border
     ["col.titlebar.active"] = 0,   -- focused-window bar fill color.
-                                   -- 0 = follow the frame's col.active color
+                                   -- 0 = the focused frame color (as resolved
+                                   -- from col.active above)
     ["col.titlebar.inactive"] = 0, -- unfocused-window bar fill color.
                                    -- 0 = follow col.titlebar.active if that is
-                                   -- set, else the frame's col.inactive color
+                                   -- set, else the unfocused frame color
     ["titlebar.opacity.active"] = 1.0,   -- opacity multiplier (0..1) on the bar
                                          -- fill and title text, focused window
     ["titlebar.opacity.inactive"] = 1.0, -- same, unfocused windows. 0 = no bar
@@ -159,7 +184,7 @@ hl.config({ plugin = { ["3la_milspec"] = {
 } } })
 ```
 
-Live-tweak and inspect (the Lua parser rejects `hyprctl keyword`):
+Live-tweak and inspect (`hyprctl keyword` doesn't exist on 0.57.0):
 
 ```sh
 hyprctl eval 'hl.config({ plugin = { ["3la_milspec"] = { chamfer = 30, titlebar = 1, ["titlebar.height"] = 22 } } })'
@@ -188,8 +213,8 @@ The rules:
 
 - **Three fields, always.** `class_regex,title_regex,override text`. Only the
   first two commas split fields, so the override text may contain commas. A
-  2-field shorthand like `^(btop)$,SYSTEM MONITOR` is read as a *class* regex
-  with no override field and skipped — leave the class empty instead:
+  2-field shorthand like `^(btop)$,SYSTEM MONITOR` has only one comma and is
+  skipped as malformed. Leave the class empty instead:
   `,^(btop)$,SYSTEM MONITOR`.
 - **Empty regex = any.** Both regexes must match for the rule to apply.
 - **Search, not full match.** Regexes are `std::regex_search` (ECMAScript), so
@@ -216,8 +241,8 @@ to both — see [Example config](#example-config).
 
 ## Drop shadow
 
-Hyprland's own `decoration:shadow` is a rounded rectangle around the window
-itself, so it sits inside the frame and ignores the chamfers. The plugin's
+Hyprland's own `decoration:shadow` hugs the window's rectangle, so its square
+corner pokes out past the chamfers. The plugin's
 shadow uses the same falloff as Hyprland's `shadow.glsl`
 (`alpha = ((range - d) / range) ^ render_power` for distance `d` outside the
 shape) and the same geometry order (grow by `range`, scale about the centre,
@@ -225,20 +250,23 @@ then offset). It is measured from the frame's **outer edge**, so it follows
 both 45° cuts and the title bar band.
 
 - Hyprland's own `decoration:shadow` is hidden on framed windows by default
-  (`native_shadow = 0`): the plugin sets the window's `noshadow` property at
-  the `setprop` priority, as `hyprctl setprop noshadow 1` would, and lifts it
-  again when the frame is hidden or the plugin unloads. Unframed windows keep
-  it. `native_shadow = 1` leaves it alone, and then both shadows are drawn.
+  (`native_shadow = 0`): the plugin sets the window's `no_shadow` property at
+  `setprop` priority (what `hyprctl setprop` sets) and unsets it when the
+  frame is hidden, `native_shadow` is set to 1, or the plugin unloads.
+  Unframed windows keep it. `native_shadow = 1` leaves it alone, and then both
+  shadows are drawn.
 - Only shows **outside** the frame, never in the gap between frame and window.
   Its cut-out sits on the stroke's **inner** edge, so it runs on under the
-  stroke the way Hyprland's shadow runs under its border. Cutting at the
-  outer edge left a light seam between stroke and shadow along the 45° cuts,
-  where both antialiased edges let the background through. With the stroke
-  hidden (`frame = 0`, `frame.ignore_*`, a transparent colour) it is cut at
-  the outer edge as before. A translucent stroke shows the shadow through it.
-- Drawn **above** the window (unlike Hyprland's shadow, which sits under it),
-  so it runs along the whole chamfer: through the corners clipped past the cut
-  and, without the clip, over the painted covers there.
+  stroke the way Hyprland's shadow runs under its border; a cut at the outer
+  edge would leave a light seam along the 45° cuts, where both antialiased
+  edges let the background through. With no stroke drawn (`frame = 0`,
+  `frame.ignore_*`, a fully transparent frame colour) it is cut at the outer
+  edge. A translucent stroke shows the shadow through it.
+- Drawn on the OVER layer, **above** the window (Hyprland's shadow sits under
+  it), and added before the frame so the stroke stays on top. With the
+  [corner clip](#window-corner-covers) it runs along the whole chamfer,
+  through the clipped corners. In the fallback without the clip, the covers
+  past the stroke paint over it there.
 - `frame = 0` / `frame.ignore_*` hide only the stroke; the shadow still traces
   the frame shape. `enabled = 0` or `ignore_class` / `ignore_title` also
   remove the shadow.
@@ -246,6 +274,8 @@ both 45° cuts and the title bar band.
 - Ignores the renderer's fade alpha, like the frame.
 - Built on the CPU into up to 4 cached textures covering only the ring around
   the frame; rebuilt when size, scale, colour or a shadow option changes.
+  During an animated resize they are built once at the target size and
+  stretched, like the frame.
 
 ## Background fill
 
@@ -257,9 +287,10 @@ panel behind a HUD frame. Default `0` = transparent.
 - The window and Hyprland's border are cut out, honouring `rounding` and
   `rounding_power`. Nothing is painted behind the window, so a translucent
   window never shows the fill through it.
-- Drawn into the same cached texture as the frame, under the title bar and
-  the stroke. The colour's alpha is respected.
-- Windows with no frame get no fill.
+- Drawn into the same cached texture as the frame, under the corner covers,
+  the title bar and the stroke. The colour's alpha is respected.
+- Unframed windows (`enabled = 0`, `ignore_*`) get no fill; `frame = 0` /
+  `frame.ignore_*` keep it.
 
 ```sh
 hyprctl eval 'hl.config({ plugin = { ["3la_milspec"] = { ["col.background"] = "rgba(0a141c99)" } } })'
@@ -268,29 +299,17 @@ hyprctl eval 'hl.config({ plugin = { ["3la_milspec"] = { ["col.background"] = 0 
 
 ## Window corner covers
 
-The frame is chamfered but the app inside is still a square window.
-`corners = 1` (the default) cuts the window's own corner like the frame:
+The frame is chamfered but the app inside is still a rectangle.
+`corners = 1` (the default) cuts the window's own top-left and bottom-right
+corners like the frame, in two parts:
 
-- **Bottom-right:** always cut.
-- **Top-left:** cut wherever the chamfer reaches the window. With a MilSpec
-  title bar the bar carries the corner and the window sits below its band, so
-  the window itself is only cut by a chamfer deeper than that band.
-
-Two things happen at such a corner:
-
-- **Past the frame's outer edge the client is clipped.** A client buffer is
-  rectangular, so wherever the chamfer is deeper than the window's insets the
-  app's corner would poke past the cut (7 px on an `offset.top_flush_class`
-  window at offset 5 / thickness 1 / chamfer 14, 2 px otherwise). The plugin
-  hooks `CSurfacePassElement::visibleRegion`, the clip Hyprland scissors every
-  window surface with, and `opaqueRegion`, which the render pass culls
-  everything underneath with, and subtracts that triangle from both, so
-  nothing of the app is drawn there and the wallpaper and the
-  [drop shadow](#drop-shadow) show through. 3LA-Tint follows the same clip.
-  Popups are never clipped. A core `general:border_size > 0` is not clipped
-  either; keep it 0 with chamfers. If a symbol is missing on a future Hyprland
-  the plugin notifies once at load and falls back to the cover below painting
-  over the corner.
+- **Past the frame's outer edge the client is clipped.** Wherever the chamfer
+  is deeper than the window's insets (border + `offset` + `thickness` on each
+  edge, plus the bar band on top) the app's corner would poke past the cut:
+  7 px on an `offset.top_flush_class` window at offset 5 / thickness 1 /
+  chamfer 14, 2 px otherwise. At the defaults (offset 10, thickness 2,
+  chamfer 15) nothing pokes past, so nothing is clipped. With a title bar the
+  top-left is only clipped by a chamfer deeper than the bar band.
 - **Inside the frame a 45° triangle is painted over the window**
   (`corners.size`): by default a band `offset` wide along the inside of the
   stroke's diagonal, so the gap between the stroke and the app is the same
@@ -298,6 +317,31 @@ Two things happen at such a corner:
   transparency: it reads as a cut when its colour matches the fill around it,
   which is why it follows `col.background` by default. `corners.size = 0`
   drops it and the app runs right up to the chamfer.
+
+**The clip.** At load, before any frame is attached, the plugin finds two
+Hyprland functions by name and hooks them, subtracting the corner triangle
+from what each returns:
+
+- `CSurfacePassElement::visibleRegion`: the clip each window surface is
+  scissored with. When it comes back empty (no client-set visible region,
+  which the renderer reads as "no clip"), the hook starts from the surface's
+  full box.
+- `CSurfacePassElement::opaqueRegion`: what the render pass culls everything
+  underneath with. Cut 1 px wider, so the uncovered area beneath is never
+  smaller than what the surface skips.
+
+So nothing of the app is drawn there, and the wallpaper and the
+[drop shadow](#drop-shadow) show through. 3LA-Tint reads the same
+`visibleRegion`, so its tint follows the cut. The main surface and its
+subsurfaces are clipped; popups never are. Hyprland's core border
+(`general:border_size > 0`) is a separate decoration and is not clipped; keep
+it 0 with chamfers. Unloading removes the hooks and repaints every window.
+
+**Fallback.** If either function is not found or either hook fails to
+install, both are removed and a 6 s notification reads "corner cut
+unavailable on this Hyprland, falling back to painted corner covers". Nothing
+is clipped then, and the covers are not confined to the frame outline: they
+paint over the window's corner past the stroke as well.
 
 - Triangle legs are measured on the window **plus** its border, with only the
   diagonal antialiased. Covers are clamped to half the window's shorter side.
@@ -308,13 +352,16 @@ Two things happen at such a corner:
   and the actual gaps gA / gB on the two edges meeting at the corner, the leg
   is `s = C + (T + o)·√2 − (T + gA) − (T + gB)`
   (thickness 1, offset 5, chamfer 14, both gaps 5 → 10.5 px). If s ≤ 0 no
-  cover is drawn.
+  cover is drawn, so a title bar's band removes the top-left one.
+- `corners.size ≥ 0` paints both covers at that leg on every framed window,
+  including the top-left one under a title bar.
 - Colour: `corners.col`, else `col.background`, else opaque `0xff0a0f14`.
   Always drawn fully opaque.
 - Rounded windows: with a large `rounding` a sliver of the arc can show past
   the diagonal.
-- Skipped on fullscreen windows and windows with no frame. `frame = 0` keeps
-  the covers and the clip.
+- Skipped on fullscreen and maximized windows, and on unframed windows
+  (`enabled = 0`, `ignore_*`). `frame = 0` / `frame.ignore_*` keep the covers
+  and the clip.
 
 ```sh
 hyprctl eval 'hl.config({ plugin = { ["3la_milspec"] = { ["corners.size"] = 20, ["corners.col"] = "rgba(0a141cff)" } } })'
@@ -334,14 +381,16 @@ top (no bar, flush):    window | border | thickness
 top (bar):              window | border | titlebar.gap | titlebar.height | titlebar.offset.top | thickness
 ```
 
-"No bar" means `titlebar = 0`, a `titlebar.ignore_*` match, or the bar toggled
-off. "Flush" is a no-bar window whose class matches `offset.top_flush_class`:
+"No bar" means `titlebar = 0`, a `titlebar.ignore_*` match, a
+`titlebar.require_title_class` window whose title fails
+`titlebar.require_title`, or the bar toggled off. "Flush" is a no-bar window
+whose class matches `offset.top_flush_class`:
 it drops `offset` on the top edge only, for apps that draw their own title or
 menu bar (VS Code, for example), so the frame hugs that bar. The auto corner
 cover grows to match.
 
 ```sh
-hyprctl eval 'hl.config({ plugin = { ["3la_milspec"] = { ["offset.top_flush_class"] = "^(code)$" } } })'
+hyprctl eval 'hl.config({ plugin = { ["3la_milspec"] = { ["offset.top_flush_class"] = "^(com\\.microsoft\\.VSCode)$" } } })'
 ```
 
 With the bar on, it sits `titlebar.offset.top` below the top stroke's inner
@@ -405,15 +454,15 @@ pcall(hl.config, { plugin = { ["3la_milspec"] = {
 
 ## Toggling the title bar per-window
 
-`3la_milspec:toggle` flips the title bar on the currently **focused** window
-only (independent of `titlebar.ignore_*`, reversible). The frame stays; only
-the bar and its reserved band go. It does nothing while `titlebar = 0`.
+`hl.plugin.milspec.toggle()` flips a per-window "bar off" switch on the
+currently **focused** window. The frame stays; only the bar and its reserved
+band go, and the window repositions at once. It can only hide a bar: a window
+the options give no bar (`titlebar = 0`, `titlebar.ignore_*`,
+`titlebar.require_title*`) stays bar-less either way. The switch lives on the
+window's decoration, so reloading the plugin resets it.
 
 ```lua
--- classic dispatch string (hyprland.conf-style bind)
-bind = SUPER SHIFT, B, 3la_milspec:toggle
-
--- Lua keybind driving both MilSpec and TitleBars
+-- one key for both MilSpec and TitleBars
 -- (each hl.plugin.<name> only exists while that plugin is loaded)
 hl.bind("SUPER + SHIFT + B", function()
     pcall(function() hl.plugin.titlebars.toggle() end)
@@ -421,8 +470,10 @@ hl.bind("SUPER + SHIFT + B", function()
 end, { description = "Toggle title bar on active window" })
 ```
 
-For one-off testing on a Lua-parsed config:
-`hyprctl eval 'hl.plugin.milspec.toggle()'`.
+For one-off testing: `hyprctl eval 'hl.plugin.milspec.toggle()'`. There is no
+dispatcher: Hyprland 0.57.0's `addDispatcherV2` is a no-op, so the
+`3la_milspec:toggle` the plugin asks for is never registered, and
+`hyprctl dispatch` only takes a Lua expression (`hl.dispatch(...)`).
 
 ## Example config
 
@@ -443,7 +494,7 @@ pcall(hl.config, {
         ["3la_milspec"] = {
             enabled = 1,
             offset = 5,
-            ["offset.top_flush_class"] = "^(code)$",
+            ["offset.top_flush_class"] = "^(com\\.microsoft\\.VSCode)$",
             thickness = 1,
             chamfer = 10,
             ["col.active"] = primary,
@@ -488,16 +539,19 @@ end
   `decoration:active_opacity` / `inactive_opacity`): only the configured
   colours' alpha matters. The title bar is additionally scaled by
   `titlebar.opacity.*`.
-- Not drawn on fullscreen windows. Closing a window clears its frame straight
-  away, including clients that exit on their own.
+- Not drawn on fullscreen or maximized windows (frame, bar, covers, clip and
+  shadow all skipped). Closing a window clears its frame straight away,
+  including clients that exit on their own.
 - `ignore_class` / `ignore_title` drop the frame **and** its reserved space.
   `titlebar.ignore_*` only drop the bar, and `titlebar.require_title*` only
   show it for matching titles. `frame = 0` / `frame.ignore_*` hide
   only the stroke — nothing moves. All are re-evaluated live on title/class
   changes.
 - All the class/title filters are C++ `std::regex` searches, recompiled only when the
-  pattern changes. An invalid pattern disables that filter silently.
+  pattern changes. An invalid pattern disables that filter silently (and is
+  retried on every check).
 - Cost: one RGBA texture per framed window, the size of the frame in physical
   pixels (≈ 33 MB of VRAM for a 4K-sized window). Rebuilt only when something
-  changes — including every frame of an animated resize. A window straddling
-  two monitors with different scales rebuilds it every frame.
+  changes. During an animated resize it is built once at the target size and
+  stretched over the current box, as the client buffer is. A window
+  straddling two monitors with different scales rebuilds it every frame.

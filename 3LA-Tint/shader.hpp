@@ -34,7 +34,7 @@ out vec4 fragColor;
 uniform sampler2D tex;
 uniform sampler2D surfTex; // the surface's own buffer, for its alpha
 uniform int   useSurfAlpha;
-uniform mat2  surfM;       // box-local panel px -> surface uv:
+uniform mat2  surfM;       // box-local framebuffer px -> surface uv:
 uniform vec2  surfO;       //   uv = surfM * (p + surfO), handles monitor rotation
 uniform vec2  uvScale;  // 1 / copy FB size
 uniform vec2  uvOffset; // copied sub-rect origin, px relative to the box

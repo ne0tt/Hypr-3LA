@@ -290,11 +290,16 @@ void CTintManager::drawBoxes(Render::CRenderContext& ctx, const std::vector<STin
     if (DAMAGE.empty())
         return;
 
-    // ctx.m_data.fbSize can be stale (left at a temp FB's size), so clamp
-    // to the monitor's pixel size instead
-    const Vector2D fbSize = MON->m_pixelSize;
+    // the pass draws into a work buffer in logical orientation
+    // (m_transformedSize) and the monitor's rotation is only applied when
+    // that is copied out, so boxes and damage are already framebuffer px.
+    // transformDamage marks a panel-oriented target instead, the same flag
+    // Hyprland's own elements scissor with. ctx.m_data.fbSize can be stale
+    // (left at a temp FB's size), so clamp to the monitor's size instead.
+    const bool     XFORM  = ctx.m_data.transformDamage;
+    const Vector2D fbSize = XFORM ? MON->m_pixelSize : MON->m_transformedSize;
 
-    const auto       TR    = Math::wlTransformToHyprutils(Math::invertTransform(MON->m_transform));
+    const auto       TR    = XFORM ? Math::wlTransformToHyprutils(Math::invertTransform(MON->m_transform)) : HYPRUTILS_TRANSFORM_NORMAL;
     if (const int64_t KEY = g_color->value(); KEY != m_tintKey) {
         m_tintKey      = KEY;
         m_tintUploaded = false;
@@ -315,7 +320,7 @@ void CTintManager::drawBoxes(Render::CRenderContext& ctx, const std::vector<STin
         if (region.empty())
             continue;
 
-        // panel-space (GL) rect of the box, clamped to the framebuffer
+        // framebuffer (GL) rect of the box, clamped to the framebuffer
         CBox px = SCALED;
         px.transform(TR, MON->m_transformedSize.x, MON->m_transformedSize.y);
         const int X0 = std::clamp(static_cast<int>(px.x), 0, static_cast<int>(fbSize.x));
@@ -396,7 +401,7 @@ void CTintManager::drawBoxes(Render::CRenderContext& ctx, const std::vector<STin
         glUniform1i(m_uni.useSurfAlpha, SURF_ALPHA);
         if (SURF_ALPHA) {
             // push the box's logical corners through the same transform that
-            // placed it in panel space: p0 = uv(0,0), eu/ev = +u/+v directions
+            // placed it in the framebuffer: p0 = uv(0,0), eu/ev = +u/+v directions
             auto corner = [&](double x, double y) {
                 CBox c{x, y, 0, 0};
                 c.transform(TR, MON->m_transformedSize.x, MON->m_transformedSize.y);
@@ -419,8 +424,8 @@ void CTintManager::drawBoxes(Render::CRenderContext& ctx, const std::vector<STin
         }
 
         glBindVertexArray(m_vao);
-        region.forEachRect([&ctx](const auto& R) {
-            Render::GL::g_pHyprOpenGL->scissor(ctx, &R, true);
+        region.forEachRect([&ctx, XFORM](const auto& R) {
+            Render::GL::g_pHyprOpenGL->scissor(ctx, &R, XFORM);
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         });
         glBindVertexArray(0);

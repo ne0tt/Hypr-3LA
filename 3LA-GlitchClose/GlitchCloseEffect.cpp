@@ -499,17 +499,17 @@ void CGlitchCloseManager::reset() {
 }
 
 // Where the window's pixels live inside the snapshot. makeSnapshotFB can hand
-// back a monitor-sized framebuffer instead of a window-sized one, and it is
-// rendered through the monitor's OWN projection: on a rotated monitor that
-// projection turns logical pixels into panel pixels, so the window sits rotated
-// (and, for 90/270, in a framebuffer whose axes are swapped) inside it. Mapping
-// only a scale therefore samples the wrong rect and feeds the shader a sideways
-// window, which is what made the tearing run down a portrait screen instead of
-// across it.
+// back a monitor-sized framebuffer instead of a window-sized one. It is sized
+// to the monitor's LOGICAL orientation (m_transformedSize) and rendered without
+// the monitor transform, like the work buffer the pass draws into -- the
+// rotation is only applied when a frame is copied out -- so on a rotated
+// monitor the window still sits upright inside it, at its logical position.
+// Keeping the 0.56 panel-oriented layout (a size check against m_pixelSize and
+// the monitor matrix) took a portrait snapshot for a window-sized one and
+// squeezed the whole monitor into the window's box.
 //
-// So build the full affine map from the shader's local uv (x right, y UP, both
-// in logical/screen orientation) to snapshot uv, by pushing three corners
-// through the monitor matrix.
+// So the map from the shader's local uv to snapshot uv is the window's box
+// over the snapshot's size, built from three corners like any affine map.
 //
 // NO y flip: the snapshot framebuffer is stored TOP-DOWN, so its row r is
 // monitor-local row r directly. An earlier version flipped y here on the
@@ -537,18 +537,16 @@ void CGlitchCloseManager::buildUV(SEffect& e, const PHLMONITOR& mon, const SP<Re
     e.uvXf[2]     = 0.F;
     e.uvXf[3]     = 1.F;
 
-    if (!snap || (SNAPSIZE - mon->m_pixelSize).size() >= 2.0)
+    if (!snap || (SNAPSIZE - mon->m_transformedSize).size() >= 2.0)
         return; // window-sized snapshot: local uv is already snapshot uv
 
     const double SW = SNAPSIZE.x, SH = SNAPSIZE.y;
     const CBox   PX = CBox{e.localBox}.scale(mon->m_scale);
-    const auto   M  = mon->getTransformMatrix().getMatrix(); // logical px -> panel px
 
     auto         toTex = [&](double u, double v) {
-        const double   LX = PX.x + u * PX.w;
-        const double   LY = PX.y + v * PX.h;
-        const Vector2D P{M[0] * LX + M[1] * LY + M[2], M[3] * LX + M[4] * LY + M[5]};
-        return Vector2D{P.x / SW, P.y / SH};
+        const double LX = PX.x + u * PX.w;
+        const double LY = PX.y + v * PX.h;
+        return Vector2D{LX / SW, LY / SH};
     };
 
     const Vector2D O = toTex(0.0, 0.0), DU = toTex(1.0, 0.0) - O, DV = toTex(0.0, 1.0) - O;
@@ -582,7 +580,7 @@ void CGlitchCloseManager::renderToTarget(Render::CRenderContext& ctx, SEffect& e
     const Vector2D   FBSIZE = e.target->m_size;
     Vector2D         prevViewport = ctx.m_data.fbSize;
     if (prevViewport.x < 1.0 || prevViewport.y < 1.0)
-        prevViewport = MON->m_pixelSize;
+        prevViewport = MON->m_transformedSize;
 
     auto guard = g_pHyprRenderer->bindTempFB(ctx, e.target);
 
@@ -629,8 +627,8 @@ void CGlitchCloseManager::renderToTarget(Render::CRenderContext& ctx, SEffect& e
 
     g_pHyprRenderer->setViewport(0, 0, prevViewport.x, prevViewport.y);
     g_pHyprRenderer->blend(true);
-    // `guard` rebinds the previous framebuffer here; the render pass re-scissors
-    // per element, so the disabled scissor does not need restoring
+    // `guard` rebinds the previous framebuffer and viewport here; the render pass
+    // re-scissors per element, so the disabled scissor does not need restoring
 }
 
 void CGlitchCloseManager::drawEffect(Render::CRenderContext& ctx, const SEffect& e, const PHLMONITOR& mon, double elapsedMs, double durationMs, float env) {
@@ -644,12 +642,9 @@ void CGlitchCloseManager::drawEffect(Render::CRenderContext& ctx, const SEffect&
     d.tex          = TEX;
     d.box          = CBox{e.localBox}.scale(mon->m_scale).round();
     d.a            = 1.F;
-    // NOT flipEndFrame: that flag makes Hyprland compose the monitor transform's
-    // inverse into the texture's own transform, which is right for a snapshot FB
-    // (rendered in panel orientation) but wrong here -- the shader authors this
-    // texture in logical orientation, so on a rotated monitor the flag rotated
-    // the finished effect a further 90 degrees inside its box. It is a no-op on
-    // an untransformed monitor, so dropping it changes nothing there.
+    // drawn as-is: the shader authors this texture in logical orientation, the
+    // same orientation as the framebuffer the pass draws into, so it needs no
+    // transform on a rotated monitor either
     d.damage       = CRegion{d.box};
     g_pHyprRenderer->addPassElement(ctx, makeUnique<CTexPassElement>(d));
 
