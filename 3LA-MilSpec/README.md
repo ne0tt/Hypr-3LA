@@ -40,9 +40,9 @@ Part of [Hypr-3LA](../README.md).
 
 Requires Hyprland 0.57.0 headers (see the [main README](../README.md#requirements)).
 Built with `g++ -std=c++26` against `pkg-config` `hyprland pixman-1 libdrm
-cairo pangocairo`. This is the only plugin that links extra libraries:
-`libcairo` (frame drawing) and `libpangocairo` (measuring the title's caps),
-both of which Hyprland itself already depends on.
+cairo pangocairo`. It links `libcairo` (frame drawing) and `libpangocairo`
+(measuring the title's caps, as 3LA-TitleBars also does), both of which
+Hyprland itself already depends on.
 
 ```sh
 make                                              # → 3LA-MilSpec.so

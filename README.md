@@ -144,9 +144,9 @@ fullscreen workspace, with some windows relabelled by `title_rules`:
 
 Nothing else. The built `.so` links only the C/C++ runtime — every Hyprland
 and GL symbol is left undefined and resolves against the running compositor
-at `dlopen`. The one exception is 3LA-MilSpec, which links `libcairo` and
-`libpangocairo`; Hyprland itself depends on both, so they are already
-installed.
+at `dlopen`. The exceptions: 3LA-MilSpec links `libcairo` and
+`libpangocairo`, and 3LA-TitleBars links `libpangocairo`; Hyprland itself
+depends on both, so they are already installed.
 
 ### To build
 

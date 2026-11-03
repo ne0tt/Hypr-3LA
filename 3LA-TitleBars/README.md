@@ -29,7 +29,8 @@ Part of [Hypr-3LA](../README.md).
 
 Requires Hyprland 0.57.0 headers (see the [main README](../README.md#requirements)).
 Draws only through Hyprland's renderer API (rect/texture pass elements and
-`renderText`), with no raw GL calls.
+`renderText`), with no raw GL calls. Links `libpangocairo` to measure the
+title's caps; Hyprland itself already depends on it.
 
 ```sh
 make                                              # → 3LA-TitleBars.so
@@ -199,7 +200,9 @@ pcall(hl.config, {
 - The bar is always exactly as wide as the window, flush with the outer edges
   of its border, whatever other decorations reserve around it.
 - The title is left-aligned 8 px in from the bar's edge, ellipsised to fit the
-  bar minus 8 px each side, and vertically centred. The 8 px padding is in
+  bar minus 8 px each side, and vertically centred on its capitals (the
+  text's layout box also holds descender room, which the uppercased title
+  never uses; an odd leftover pixel goes below the caps). The 8 px padding is in
   device pixels; the font size is `text.size` × the monitor's scale.
 - The title text is rendered to a texture and cached per window; it is only
   re-rendered when the text, configured colour, font, size or available width
