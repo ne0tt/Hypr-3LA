@@ -13,6 +13,7 @@
 #include <vector>
 
 #include <cairo/cairo.h>
+#include <pango/pangocairo.h>
 
 #include <hyprland/src/config/ConfigValue.hpp>
 #include <hyprland/src/config/shared/complex/ComplexDataTypes.hpp>
@@ -583,6 +584,51 @@ SP<ITexture> CMilSpecDecoration::frameTexture(int w, int h, int thick, int chamf
     return m_frameTex;
 }
 
+// Where the caps sit inside a renderText texture. renderText lays the title
+// out as one Pango line at an absolute pixel size, and its texture is that
+// line's layout box, which also holds descender room. Titles are uppercased,
+// so centring that box put the caps visibly high; measuring an "H" the same
+// way gives the cap band to centre instead. layoutH lets the caller check the
+// measurement against the real texture before trusting it.
+struct SCapBand {
+    int top     = 0; // cap top, px below the layout top
+    int h       = 0; // cap height (px)
+    int layoutH = 0; // layout box height (px)
+};
+
+static SCapBand capBand(const std::string& font, int fontPx) {
+    static CConfigValue<Config::STRING> fontFamily("misc:font_family");
+    static std::string                  cachedFamily;
+    static int                          cachedPx = 0;
+    static SCapBand                     cached;
+
+    const std::string FAMILY = font.empty() ? *fontFamily : font;
+    if (FAMILY == cachedFamily && fontPx == cachedPx)
+        return cached;
+
+    auto* const SURFACE = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
+    auto* const CR      = cairo_create(SURFACE);
+    auto* const LAYOUT  = pango_cairo_create_layout(CR);
+    auto* const FD      = pango_font_description_new();
+    pango_font_description_set_family(FD, FAMILY.c_str());
+    pango_font_description_set_absolute_size(FD, fontPx * PANGO_SCALE);
+    pango_layout_set_font_description(LAYOUT, FD);
+    pango_layout_set_text(LAYOUT, "H", -1);
+
+    PangoRectangle ink, logical;
+    pango_layout_get_pixel_extents(LAYOUT, &ink, &logical);
+
+    pango_font_description_free(FD);
+    g_object_unref(LAYOUT);
+    cairo_destroy(CR);
+    cairo_surface_destroy(SURFACE);
+
+    cachedFamily = FAMILY;
+    cachedPx     = fontPx;
+    cached       = {.top = ink.y, .h = ink.height, .layoutH = logical.height};
+    return cached;
+}
+
 SP<ITexture> CMilSpecDecoration::titleTexture(const std::string& title, const CHyprColor& color, const std::string& font, int fontPt, int maxWidthPx) {
     if (m_textTex && title == m_textTitle && color == m_textCol && font == m_textFont && fontPt == m_textPt && maxWidthPx == m_textMaxW)
         return m_textTex;
@@ -759,8 +805,14 @@ void CMilSpecDecoration::draw(Render::CRenderContext& ctx, PHLMONITOR pMonitor, 
     textBox.w = std::min<double>(TEXT->m_size.x, MAXW);
     textBox.h = TEXT->m_size.y;
     textBox.x = box.x + PADL;
-    // floor, not round: an odd leftover pixel goes below the caps, which read low otherwise
-    textBox.y = std::floor(box.y + bar.top + (bar.h - textBox.h) / 2.0);
+    // centre the caps, not the layout box (see capBand); the box is the
+    // fallback if the measured layout doesn't match the texture. floor, not
+    // round: an odd leftover pixel goes below the caps, which read low otherwise
+    const auto CAP = capBand(g_textFont->value(), FONTPT);
+    if (CAP.h > 0 && std::abs(CAP.layoutH - textBox.h) <= 1)
+        textBox.y = std::floor(box.y + bar.top + (bar.h - CAP.h) / 2.0 - CAP.top);
+    else
+        textBox.y = std::floor(box.y + bar.top + (bar.h - textBox.h) / 2.0);
 
     CTexPassElement::SRenderData textData;
     textData.tex = TEXT;

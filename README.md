@@ -144,8 +144,9 @@ fullscreen workspace, with some windows relabelled by `title_rules`:
 
 Nothing else. The built `.so` links only the C/C++ runtime — every Hyprland
 and GL symbol is left undefined and resolves against the running compositor
-at `dlopen`. The one exception is 3LA-MilSpec, which links `libcairo`;
-Hyprland itself depends on cairo, so it is already installed.
+at `dlopen`. The one exception is 3LA-MilSpec, which links `libcairo` and
+`libpangocairo`; Hyprland itself depends on both, so they are already
+installed.
 
 ### To build
 
@@ -170,7 +171,7 @@ with headers installed. Verify before building:
 
 ```sh
 pkg-config --modversion hyprland          # must equal your running compositor
-pkg-config --cflags hyprland pixman-1 libdrm cairo
+pkg-config --cflags hyprland pixman-1 libdrm cairo pangocairo
 hyprctl version | head -3
 ```
 
@@ -325,8 +326,12 @@ sources, not the Hyprland headers. Clean first.
 hyprpm update && hyprpm reload
 
 # manual route: clean + rebuild every plugin (the viewer is skipped). A
-# plugin whose build fails keeps its previous .so; --reload then unloads and
-# loads each rebuilt plugin that is currently loaded
+# plugin whose build fails keeps its previous .so. --reload then loads each
+# plugin that built (unloading it first if it's running) and re-applies
+# ~/.config/hypr/config/plugins.lua through `hyprctl eval`, since option
+# values outlive an unload (HYPR_PLUGIN_SETTINGS overrides the path; a
+# missing file is skipped). Exits non-zero if any build, load or settings
+# step fails
 ./rebuild-plugins.sh --reload
 
 # ...or one plugin by hand (unload first: the same path can't be loaded twice)

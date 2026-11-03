@@ -40,8 +40,9 @@ Part of [Hypr-3LA](../README.md).
 
 Requires Hyprland 0.57.0 headers (see the [main README](../README.md#requirements)).
 Built with `g++ -std=c++26` against `pkg-config` `hyprland pixman-1 libdrm
-cairo`. This is the only plugin that links an extra library, `libcairo`, which
-Hyprland itself already depends on.
+cairo pangocairo`. This is the only plugin that links extra libraries:
+`libcairo` (frame drawing) and `libpangocairo` (measuring the title's caps),
+both of which Hyprland itself already depends on.
 
 ```sh
 make                                              # → 3LA-MilSpec.so
@@ -398,7 +399,9 @@ edge and `titlebar.gap` above the window, inset `titlebar.offset.left` /
 `.right` from the side strokes, so it floats inside the outline like a
 launcher-panel header. The bar gets its own 45° cut at the top-left, parallel
 to the frame's. The title is left-aligned, padded clear of the cut,
-ellipsised to fit and vertically centred.
+ellipsised to fit and vertically centred on its capitals (the text's
+layout box also holds descender room, which the uppercased title never uses;
+with an odd leftover pixel, it goes below the caps).
 
 ## Title bar only for some titles
 

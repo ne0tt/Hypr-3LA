@@ -5,11 +5,12 @@ CXX        ?= g++
 
 # -g is omitted on purpose: it made the .so much larger with no codegen
 # benefit. Use `make debug` when you actually need symbols.
-# cairo draws the frame path; the compositor already has it loaded, the
-# explicit --libs just keeps the .so honest about what it calls.
+# cairo draws the frame path and pango measures the title's cap band; the
+# compositor already has both loaded, the explicit --libs just keeps the .so
+# honest about what it calls.
 CXXFLAGS += -shared -fPIC -fno-gnu-unique -std=c++26 -O2 \
-            `pkg-config --cflags pixman-1 libdrm hyprland cairo`
-LDLIBS   += `pkg-config --libs cairo`
+            `pkg-config --cflags pixman-1 libdrm hyprland cairo pangocairo`
+LDLIBS   += `pkg-config --libs cairo pangocairo`
 
 all: $(PLUGIN_NAME).so
 
