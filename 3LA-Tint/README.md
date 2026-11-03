@@ -54,7 +54,7 @@ Or via hyprpm: `hyprpm enable 3LA-Tint` (after `hyprpm add`, see
 
 Rebuild after every Hyprland update: `make clean && make` (plain `make` only
 tracks the plugin's own sources), or `./rebuild-plugins.sh` at the repo root
-for every plugin; a failed build keeps the previous `.so`. A `.so` built
+to rebuild and reload every plugin; a failed build keeps the previous `.so`. A `.so` built
 against a different Hyprland refuses to load, with a notification.
 
 ## Config

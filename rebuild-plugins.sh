@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Rebuild every plugin against the currently installed Hyprland headers,
-# and optionally load the fresh builds into the running compositor.
+# then load the fresh builds into the running compositor.
 #
 # Each plugin bakes in the Hyprland API commit hash at compile time and
 # refuses to load if it doesn't match the running compositor's, so every
@@ -11,31 +11,30 @@
 # before `make clean` and put back on failure, so a build broken by an API
 # change never leaves the path hyprland.lua loads from empty.
 #
-# --reload loads every plugin that built, unloading it first if it's
-# running, then re-applies the plugin settings file through `hyprctl eval`.
-# Option values outlive an unload, so without that re-apply a reloaded
-# plugin keeps stale values and options a rebuild adds stay at defaults.
-# The settings file is Lua (needs a Lua Hyprland config); a missing file is
-# skipped. A plugin whose build failed is left as it is in the compositor.
+# After building, every plugin that built is loaded, unloading it first if
+# it's running, then the plugin settings file is re-applied through
+# `hyprctl eval`. Option values outlive an unload, so without that re-apply
+# a reloaded plugin keeps stale values and options a rebuild adds stay at
+# defaults. The settings file is Lua (needs a Lua Hyprland config); a
+# missing file is skipped. A plugin whose build failed is left as it is in
+# the compositor. With no running Hyprland to reach (e.g. from a TTY), the
+# plugins are still built and the reload is skipped, exiting non-zero.
 #
 # Usage:
-#   ./rebuild-plugins.sh            # clean + build every plugin
-#   ./rebuild-plugins.sh --reload   # also load each built plugin and
-#                                    # re-apply its settings
+#   ./rebuild-plugins.sh            # clean + build every plugin, then
+#                                    # load each and re-apply its settings
 #
 # Environment:
-#   HYPR_PLUGIN_SETTINGS   settings file --reload re-applies
+#   HYPR_PLUGIN_SETTINGS   settings file re-applied after loading
 #                          (default: ~/.config/hypr/config/plugins.lua)
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 SETTINGS="${HYPR_PLUGIN_SETTINGS:-$HOME/.config/hypr/config/plugins.lua}"
-RELOAD=0
-[[ "${1:-}" == "--reload" ]] && RELOAD=1
-
-if [[ "$RELOAD" -eq 1 ]] && ! hyprctl version >/dev/null 2>&1; then
-    echo "error: --reload can't reach a running Hyprland (is HYPRLAND_INSTANCE_SIGNATURE set?)" >&2
-    exit 1
+RELOAD=1
+if ! hyprctl version >/dev/null 2>&1; then
+    echo "warning: can't reach a running Hyprland (is HYPRLAND_INSTANCE_SIGNATURE set?); building only" >&2
+    RELOAD=0
 fi
 
 if command -v pkg-config >/dev/null && pkg-config --exists hyprland; then
@@ -129,10 +128,13 @@ if [[ "$RELOAD" -eq 1 ]]; then
 fi
 
 echo "Built:  ${built[*]:-none}"
+status=0
 if [[ "$RELOAD" -eq 1 ]]; then
     echo "Loaded: ${loaded[*]:-none}"
+else
+    echo "Reload skipped: no running Hyprland" >&2
+    status=1
 fi
-status=0
 if [[ "${#failed[@]}" -gt 0 ]]; then
     echo "Failed to build: ${failed[*]}" >&2
     status=1

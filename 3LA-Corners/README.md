@@ -50,7 +50,8 @@ Or via hyprpm: `hyprpm enable 3LA-Corners` (after `hyprpm add`, see the
 
 Rebuild after every Hyprland update: `make clean && make` (plain `make` only
 tracks the plugin's own sources), or `./rebuild-plugins.sh` at the repo root,
-which keeps the previous `.so` if a build fails. A build for a different
+which rebuilds and reloads every plugin and keeps the previous `.so` if a
+build fails. A build for a different
 Hyprland commit refuses to load with a *version mismatch* notification.
 
 | target | effect |

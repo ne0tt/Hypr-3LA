@@ -49,8 +49,8 @@ make                                              # → 3LA-MilSpec.so
 hyprctl plugin load "$PWD/3LA-MilSpec.so"         # absolute path required
 ```
 
-`../rebuild-plugins.sh` cleans and rebuilds every plugin; one whose build
-fails keeps its previous `.so`. Or via hyprpm: `hyprpm enable 3LA-MilSpec`.
+`../rebuild-plugins.sh` cleans, rebuilds and reloads every plugin; one whose
+build fails keeps its previous `.so`. Or via hyprpm: `hyprpm enable 3LA-MilSpec`.
 
 Load at startup from `hyprland.lua` with
 `hl.plugin.load("/path/to/Hypr-3LA/3LA-MilSpec/3LA-MilSpec.so")`.

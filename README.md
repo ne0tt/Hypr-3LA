@@ -325,14 +325,15 @@ sources, not the Hyprland headers. Clean first.
 # hyprpm route
 hyprpm update && hyprpm reload
 
-# manual route: clean + rebuild every plugin (the viewer is skipped). A
-# plugin whose build fails keeps its previous .so. --reload then loads each
-# plugin that built (unloading it first if it's running) and re-applies
-# ~/.config/hypr/config/plugins.lua through `hyprctl eval`, since option
-# values outlive an unload (HYPR_PLUGIN_SETTINGS overrides the path; a
-# missing file is skipped). Exits non-zero if any build, load or settings
-# step fails
-./rebuild-plugins.sh --reload
+# manual route: clean + rebuild every plugin (the viewer is skipped), then
+# reload. A plugin whose build fails keeps its previous .so. Each plugin
+# that built is loaded (unloaded first if it's running), then
+# ~/.config/hypr/config/plugins.lua is re-applied through `hyprctl eval`,
+# since option values outlive an unload (HYPR_PLUGIN_SETTINGS overrides the
+# path; a missing file is skipped). With no running Hyprland it only builds.
+# Exits non-zero if any build, load or settings step fails, or the reload
+# was skipped
+./rebuild-plugins.sh
 
 # ...or one plugin by hand (unload first: the same path can't be loaded twice)
 make -C 3LA-GlitchClose clean && make -C 3LA-GlitchClose
@@ -452,7 +453,7 @@ their READMEs.
 3LA-Tint/                 GLSL recolour of a window's grey pixels
 assets/                   screenshots and demo recordings
 hyprpm.toml               hyprpm manifest + Hyprland/plugin commit pins
-rebuild-plugins.sh        clean-rebuild (and optionally reload) every plugin
+rebuild-plugins.sh        clean-rebuild, then reload, every plugin
 ```
 
 Each plugin directory holds its sources (`main.cpp`, `globals.hpp`, the

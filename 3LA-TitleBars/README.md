@@ -41,8 +41,8 @@ At startup, `hl.plugin.load("/abs/path/to/3LA-TitleBars.so")` in
 `hyprland.lua` (see [Loading at startup](../README.md#loading-at-startup-lua-config)),
 or via hyprpm: `hyprpm enable 3LA-TitleBars`. Rebuild after every Hyprland
 update (`make clean && make`, since plain `make` doesn't track the Hyprland
-headers, or `./rebuild-plugins.sh` at the repo root, which keeps the previous
-`.so` if a build fails): a build for a different Hyprland commit
+headers, or `./rebuild-plugins.sh` at the repo root, which rebuilds and
+reloads every plugin and keeps the previous `.so` if a build fails): a build for a different Hyprland commit
 refuses to load.
 
 ## Config
