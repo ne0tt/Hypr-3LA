@@ -32,7 +32,7 @@ For a keybind, point it at `run.sh`:
 
 ```lua
 hl.bind(mainMod .. " + SHIFT + G",
-    hl.dsp.exec_cmd("/path/to/Hypr-3LA/3LA-GlitchClose-Viewer/run.sh"),
+    hl.dsp.exec_cmd("/path/to/3LA-Plugins/3LA-GlitchClose-Viewer/run.sh"),
     { description = "GlitchClose shader tuner" })
 ```
 

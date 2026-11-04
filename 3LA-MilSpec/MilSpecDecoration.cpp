@@ -17,6 +17,7 @@
 
 #include <hyprland/src/config/ConfigValue.hpp>
 #include <hyprland/src/config/shared/complex/ComplexDataTypes.hpp>
+#include <hyprland/src/desktop/rule/windowRule/WindowRuleApplicator.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/view/window/Window.hpp>
 #include <hyprland/src/desktop/view/window/WindowMetadata.hpp>
@@ -181,7 +182,7 @@ static CHyprColor borderGradientColor(bool active) {
 
 // same resolution order as 3LA-Corners: own value, then (inactive only)
 // col.active if that is set explicitly, then the core border gradient
-static CHyprColor frameColor(bool active) {
+static CHyprColor configFrameColor(bool active) {
     const auto CONFIGURED = active ? g_colorActive->value() : g_colorInactive->value();
     if (CONFIGURED != 0)
         return CHyprColor{static_cast<uint64_t>(CONFIGURED)};
@@ -193,6 +194,22 @@ static CHyprColor frameColor(bool active) {
     }
 
     return borderGradientColor(active);
+}
+
+// the window's own active_border_color / inactive_border_color (set_prop or a
+// border_color window rule) wins, first gradient stop only. An empty gradient
+// is what set_prop stores for "-1" (0.57 can't unset it), so it means none.
+static CHyprColor frameColor(const PHLWINDOW& w, bool active) {
+    if (w && w->m_ruleApplicator) {
+        const auto& PROP = active ? w->m_ruleApplicator->activeBorderColor() : w->m_ruleApplicator->inactiveBorderColor();
+        if (PROP.hasValue()) {
+            const auto GRADIENT = PROP.value();
+            if (!GRADIENT.m_colors.empty())
+                return GRADIENT.m_colors[0];
+        }
+    }
+
+    return configFrameColor(active);
 }
 
 // same resolution order as the frame: own value, then (inactive only) the
@@ -657,14 +674,15 @@ void CMilSpecDecoration::draw(Render::CRenderContext& ctx, PHLMONITOR pMonitor, 
     // like 3LA-Corners, the renderer's `a` (window opacity rules,
     // decoration:active_opacity/inactive_opacity) is deliberately ignored:
     // only the configured colors' own alpha matters
-    const CHyprColor FRAMECOL = frameColor(ACTIVE);
+    const CHyprColor FRAMECOL = frameColor(PWINDOW, ACTIVE);
     const bool       BARON    = barShown();
 
     // titlebar.opacity.* scales the bar fill and title text only. The faded
     // fill is baked into the frame texture (its color is in the cache key);
-    // at 0 neither is drawn, but the bar's reserved band stays.
+    // at 0 neither is drawn, but the bar's reserved band stays. The bar's
+    // fallback ignores a per-window border colour: only the stroke follows it.
     const float BAROPACITY = std::clamp(ACTIVE ? g_titlebarOpacityActive->value() : g_titlebarOpacityInactive->value(), 0.F, 1.F);
-    CHyprColor  barCol     = titlebarColor(ACTIVE, FRAMECOL);
+    CHyprColor  barCol     = titlebarColor(ACTIVE, configFrameColor(ACTIVE));
     barCol.a *= BAROPACITY;
 
     // a hidden stroke is baked as fully transparent: its color is part of the
@@ -1080,7 +1098,7 @@ void CMilSpecShadowDecoration::draw(Render::CRenderContext& ctx, PHLMONITOR pMon
     key.power   = std::clamp<int>(g_shadowRenderPower->value(), 1, 4);
     // the stroke's width in monitor px, as the frame texture rounds it; 0
     // when no stroke is drawn, so the shadow never shows inside the frame
-    key.inset   = FRAME->frameShown() && frameColor(ACTIVE).a > 0.F ? std::max(1, static_cast<int>(std::round(std::max<Config::INTEGER>(g_thickness->value(), 1) * SCALE))) : 0;
+    key.inset   = FRAME->frameShown() && frameColor(PWINDOW, ACTIVE).a > 0.F ? std::max(1, static_cast<int>(std::round(std::max<Config::INTEGER>(g_thickness->value(), 1) * SCALE))) : 0;
     key.sharp   = g_shadowSharp->value() != 0;
     key.color   = COL;
 

@@ -10,7 +10,7 @@ a flash.
 
 *Corner brackets with glow around a focused kitty (1 px Hyprland border on).*
 
-Part of [Hypr-3LA](../README.md).
+Part of [3LA-Plugins](../README.md).
 
 ## Contents
 
@@ -37,7 +37,7 @@ hyprctl plugin load "$PWD/3LA-Corners.so"         # absolute path required
 At startup, in `hyprland.lua`:
 
 ```lua
-hl.plugin.load("/path/to/Hypr-3LA/3LA-Corners/3LA-Corners.so")
+hl.plugin.load("/path/to/3LA-Plugins/3LA-Corners/3LA-Corners.so")
 ```
 
 `autoload.sh` is an optional startup fallback: it loads the `.so` if

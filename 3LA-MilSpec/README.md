@@ -20,7 +20,7 @@ the bar's fill so it follows the top-left cut) is drawn with cairo into one
 antialiased texture at the monitor's pixel scale, cached per window, and only
 redrawn when its size, scale, colours or the relevant options change.
 
-Part of [Hypr-3LA](../README.md).
+Part of [3LA-Plugins](../README.md).
 
 ## Contents
 
@@ -53,7 +53,7 @@ hyprctl plugin load "$PWD/3LA-MilSpec.so"         # absolute path required
 build fails keeps its previous `.so`. Or via hyprpm: `hyprpm enable 3LA-MilSpec`.
 
 Load at startup from `hyprland.lua` with
-`hl.plugin.load("/path/to/Hypr-3LA/3LA-MilSpec/3LA-MilSpec.so")`.
+`hl.plugin.load("/path/to/3LA-Plugins/3LA-MilSpec/3LA-MilSpec.so")`.
 `autoload.sh` is an optional `hyprland.start` fallback: it loads the `.so` only
 if it is not loaded yet, then re-runs `~/.config/hypr/config/plugins.lua`
 through `hyprctl eval`.

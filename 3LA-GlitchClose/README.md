@@ -28,7 +28,7 @@ which is then composited. So:
 - every shader knob and colour is a uniform read each frame, so re-running
   matugen re-themes a running effect without reloading the plugin
 
-Part of [Hypr-3LA](../README.md).
+Part of [3LA-Plugins](../README.md).
 
 ## Contents
 
@@ -53,7 +53,7 @@ hyprctl getoption plugin:3la_glitch_close:duration
 At startup, in `hyprland.lua`:
 
 ```lua
-hl.plugin.load("/path/to/Hypr-3LA/3LA-GlitchClose/3LA-GlitchClose.so")
+hl.plugin.load("/path/to/3LA-Plugins/3LA-GlitchClose/3LA-GlitchClose.so")
 ```
 
 `autoload.sh` is an optional startup fallback: it loads the `.so` if

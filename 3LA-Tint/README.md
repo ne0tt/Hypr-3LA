@@ -22,7 +22,7 @@ covers the window's subsurfaces and popups (menus, dropdowns) too.
 pulled toward `col.tint`. Shot at `strength = 1.0` so the shift is visible on
 a dark terminal; at 0.3 it is subtle.*
 
-Part of [Hypr-3LA](../README.md).
+Part of [3LA-Plugins](../README.md).
 
 ## Contents
 
@@ -45,7 +45,7 @@ hyprctl plugin load "$PWD/3LA-Tint.so"            # absolute path required
 ```
 
 At startup, load it from `hyprland.lua` with
-`hl.plugin.load("/path/to/Hypr-3LA/3LA-Tint/3LA-Tint.so")`. `autoload.sh` is
+`hl.plugin.load("/path/to/3LA-Plugins/3LA-Tint/3LA-Tint.so")`. `autoload.sh` is
 an optional startup fallback; see
 [Loading at startup](../README.md#loading-at-startup-lua-config).
 

@@ -1,4 +1,4 @@
-# Hypr-3LA
+# 3LA-Plugins
 
 Hyprland plugins that give a tiling desktop a CCTV / surveillance-rig
 aesthetic: chamfered HUD frames, targeting-reticle corner brackets, reserved
@@ -197,7 +197,7 @@ one route or the other for a given plugin, not both.
 
 ```sh
 hyprpm update                                     # build headers for your Hyprland
-hyprpm add https://github.com/ne0tt/Hypr-3LA
+hyprpm add https://github.com/ne0tt/3LA-Plugins
 hyprpm enable 3LA-MilSpec
 hyprpm enable 3LA-Corners
 hyprpm enable 3LA-GlitchClose
@@ -233,8 +233,8 @@ revision.
 ### Option B — build from source
 
 ```sh
-git clone https://github.com/ne0tt/Hypr-3LA
-cd Hypr-3LA
+git clone https://github.com/ne0tt/3LA-Plugins
+cd 3LA-Plugins
 
 make -C 3LA-MilSpec
 make -C 3LA-Corners
@@ -268,11 +268,11 @@ config apply as soon as it loads.
 
 ### Loading at startup (Lua config)
 
-`hl.plugin.load` takes an absolute path. Replace `/path/to/Hypr-3LA` with
+`hl.plugin.load` takes an absolute path. Replace `/path/to/3LA-Plugins` with
 wherever you cloned the repo.
 
 ```lua
-local HYPR3LA = "/path/to/Hypr-3LA"
+local HYPR3LA = "/path/to/3LA-Plugins"
 
 hl.plugin.load(HYPR3LA .. "/3LA-MilSpec/3LA-MilSpec.so")
 hl.plugin.load(HYPR3LA .. "/3LA-Corners/3LA-Corners.so")

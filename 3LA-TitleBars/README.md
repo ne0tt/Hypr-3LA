@@ -14,7 +14,7 @@ sits above it rather than painting over the app's own top pixels.
 *On a live desktop, with some windows relabelled by `title_rules`.
 ([mp4](../assets/titlebars-demo.mp4))*
 
-Part of [Hypr-3LA](../README.md).
+Part of [3LA-Plugins](../README.md).
 
 ## Contents
 

@@ -1,7 +1,7 @@
 [repository]
-name = "Hypr-3LA"
+name = "3LA-Plugins"
 authors = ["sispx"]
-url = "https://github.com/ne0tt/Hypr-3LA"
+url = "https://github.com/ne0tt/3LA-Plugins"
 # [hyprland commit, plugin repo commit] — update the second hash after committing
 commit_pins = [
     ["efb50993780079460b0cbed1363e2166a2de1d9f", "d97ba8c3c47df46130dacfc4cb396743a906d802"],
