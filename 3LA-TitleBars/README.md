@@ -27,7 +27,7 @@ Part of [3LA-Plugins](../README.md).
 
 ## Build and load
 
-Requires Hyprland 0.57.0 headers (see the [main README](../README.md#requirements)).
+Requires Hyprland 0.57.1 headers (see the [main README](../README.md#requirements)).
 Draws only through Hyprland's renderer API (rect/texture pass elements and
 `renderText`), with no raw GL calls. Links `libpangocairo` to measure the
 title's caps; Hyprland itself already depends on it.

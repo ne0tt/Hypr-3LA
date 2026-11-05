@@ -5,7 +5,7 @@ aesthetic: chamfered HUD frames, targeting-reticle corner brackets, reserved
 title bars, a GLSL "signal lost" window-close effect, and a shader that pulls
 un-themeable apps toward your theme colour.
 
-All are C++ Hyprland plugins built against **Hyprland 0.57.0** (`0aa6745`),
+All are C++ Hyprland plugins built against **Hyprland 0.57.1** (`acc1aa0`),
 configured only through Hyprland's Lua config (`hl.config`), and installable
 with `hyprpm`. Every plugin has an `enabled` option that turns it off live
 without unloading it.
@@ -138,8 +138,8 @@ fullscreen workspace, with some windows relabelled by `title_rules`:
 
 | | |
 |---|---|
-| **Hyprland 0.57.0** | Matched on *commit hash*, not version string, so two 0.57.0 builds from different commits still mismatch — see [Rebuilding after a Hyprland update](#rebuilding-after-a-hyprland-update) |
-| **Renderer** | 3LA-GlitchClose and 3LA-Tint make raw GL calls through Hyprland's GL renderer, the only renderer 0.57.0 creates. 3LA-Corners, 3LA-TitleBars and 3LA-MilSpec draw only through renderer pass elements. |
+| **Hyprland 0.57.1** | Matched on *commit hash*, not version string, so two 0.57.1 builds from different commits still mismatch — see [Rebuilding after a Hyprland update](#rebuilding-after-a-hyprland-update) |
+| **Renderer** | 3LA-GlitchClose and 3LA-Tint make raw GL calls through Hyprland's GL renderer, the only renderer 0.57.1 creates. 3LA-Corners, 3LA-TitleBars and 3LA-MilSpec draw only through renderer pass elements. |
 | **Function hooks** | 3LA-MilSpec's corner clip hooks two `CSurfacePassElement` methods by symbol name. If they can't be found or hooked, the plugin says so once at load and paints its corner covers instead; nothing else breaks. |
 
 Nothing else. The built `.so` links only the C/C++ runtime — every Hyprland
@@ -348,7 +348,7 @@ hyprctl plugin load   "$PWD/3LA-GlitchClose/3LA-GlitchClose.so"
 | `Package hyprland was not found in the pkg-config search path` | headers missing or off `PKG_CONFIG_PATH` | install the Hyprland headers; check `pkg-config --modversion hyprland` |
 | Notification: *version mismatch* | built against a different Hyprland commit than the running one | rebuild — see above |
 | `hyprctl plugin load` returns an error | relative path, or that path is already loaded (`Cannot load a plugin twice!`) | use an absolute path; `hyprctl plugin unload` first |
-| `hyprctl keyword` → `unknown request` | Hyprland 0.57.0 has no `keyword` command | `hyprctl eval 'hl.config({...})'` |
+| `hyprctl keyword` → `unknown request` | Hyprland 0.57.1 has no `keyword` command | `hyprctl eval 'hl.config({...})'` |
 | `hyprctl dispatch` errors when calling a plugin function | `dispatch` wraps its argument in `hl.dispatch(...)`; the plugins register no dispatchers | `hyprctl eval 'hl.plugin.<name>.<fn>()'` — see [Lua functions](#lua-functions) |
 | `unknown config key 'plugin.…'`, or `hyprctl getoption` → `no such option` | plugin not loaded, or option name misspelled | check `hyprctl plugin list`; guard optional blocks with `hl.get_config` (below) |
 | `error setting '…'` | value out of its registered range (rejected, not clamped) | see the ranges in the plugin's README |

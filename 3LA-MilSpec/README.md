@@ -38,7 +38,7 @@ Part of [3LA-Plugins](../README.md).
 
 ## Build and load
 
-Requires Hyprland 0.57.0 headers (see the [main README](../README.md#requirements)).
+Requires Hyprland 0.57.1 headers (see the [main README](../README.md#requirements)).
 Built with `g++ -std=c++26` against `pkg-config` `hyprland pixman-1 libdrm
 cairo pangocairo`. It links `libcairo` (frame drawing) and `libpangocairo`
 (measuring the title's caps, as 3LA-TitleBars also does), both of which
@@ -185,7 +185,7 @@ hl.config({ plugin = { ["3la_milspec"] = {
 } } })
 ```
 
-Live-tweak and inspect (`hyprctl keyword` doesn't exist on 0.57.0):
+Live-tweak and inspect (`hyprctl keyword` doesn't exist on 0.57.1):
 
 ```sh
 hyprctl eval 'hl.config({ plugin = { ["3la_milspec"] = { chamfer = 30, titlebar = 1, ["titlebar.height"] = 22 } } })'
@@ -474,7 +474,7 @@ end, { description = "Toggle title bar on active window" })
 ```
 
 For one-off testing: `hyprctl eval 'hl.plugin.milspec.toggle()'`. There is no
-dispatcher: Hyprland 0.57.0's `addDispatcherV2` is a no-op, so the
+dispatcher: Hyprland 0.57.1's `addDispatcherV2` is a no-op, so the
 `3la_milspec:toggle` the plugin asks for is never registered, and
 `hyprctl dispatch` only takes a Lua expression (`hl.dispatch(...)`).
 

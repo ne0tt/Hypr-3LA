@@ -25,7 +25,7 @@ Part of [3LA-Plugins](../README.md).
 
 ## Build and load
 
-Requires Hyprland 0.57.0 headers (see the [main README](../README.md#requirements)).
+Requires Hyprland 0.57.1 headers (see the [main README](../README.md#requirements)).
 Draws only renderer rect pass elements (no raw GL calls), so it is not tied to
 the GL renderer.
 

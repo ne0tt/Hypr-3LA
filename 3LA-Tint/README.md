@@ -34,8 +34,8 @@ Part of [3LA-Plugins](../README.md).
 
 ## Build and load
 
-Requires Hyprland 0.57.0 headers (see the [main README](../README.md#requirements))
-and the **GL renderer** (the only one Hyprland 0.57.0 creates). Tint draws
+Requires Hyprland 0.57.1 headers (see the [main README](../README.md#requirements))
+and the **GL renderer** (the only one Hyprland 0.57.1 creates). Tint draws
 with raw GL; under any other renderer it shows a notification the first time a
 matched window is drawn, and tints nothing.
 
