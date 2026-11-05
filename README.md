@@ -222,6 +222,7 @@ commit hyprpm checks out while that Hyprland is running:
 
 | Hyprland | plugin repo |
 |---|---|
+| 0.57.1 (`acc1aa0`) | `dd0fb48` |
 | 0.57.0 (`0aa6745`) | `0cafa8b` |
 | 0.56.2 (`efb5099`) | `d97ba8c` |
 

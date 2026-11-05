@@ -5,7 +5,8 @@ url = "https://github.com/ne0tt/3LA-Plugins"
 # [hyprland commit, plugin repo commit] — update the second hash after committing
 commit_pins = [
     ["efb50993780079460b0cbed1363e2166a2de1d9f", "d97ba8c3c47df46130dacfc4cb396743a906d802"],
-    ["0aa6745f705f2c4b0a5004eb019ef76e5bbdb426", "0cafa8b82ac6463d71e4cf88f044a3e6774af347"]
+    ["0aa6745f705f2c4b0a5004eb019ef76e5bbdb426", "0cafa8b82ac6463d71e4cf88f044a3e6774af347"],
+    ["acc1aa0bfd4bd575dcb0f76c35ccf12b660a1ab9", "dd0fb484a7bc1aab3a58e7b60a354884069e1cbd"]
 ]
 
 [3LA-Corners]
