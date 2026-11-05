@@ -18,9 +18,10 @@ covers the window's subsurfaces and popups (menus, dropdowns) too.
 
 ![3LA-Tint](../assets/tint.png)
 
-*Same kitty, before (left) and after (right): the near-black background is
-pulled toward `col.tint`. Shot at `strength = 1.0` so the shift is visible on
-a dark terminal; at 0.3 it is subtle.*
+*The same Google Chrome window, before (left) and after (right): Chrome's
+greys and the page's near-black background are pulled toward `col.tint`,
+while the syntax-highlighted code keeps its colours. Shot at
+`strength = 0.25`, `sat_lo = 0.03`, `sat_hi = 0.08`.*
 
 Part of [3LA-Plugins](../README.md).
 

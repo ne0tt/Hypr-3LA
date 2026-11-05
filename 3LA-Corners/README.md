@@ -8,7 +8,7 @@ a flash.
 
 ![3LA-Corners](../assets/corners.png)
 
-*Corner brackets with glow around a focused kitty (1 px Hyprland border on).*
+*Corner brackets around a focused kitty (1 px Hyprland border on).*
 
 Part of [3LA-Plugins](../README.md).
 
